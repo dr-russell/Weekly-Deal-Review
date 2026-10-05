@@ -1,0 +1,7 @@
+{
+  "account": "your-account@example.com",
+  "targets": {
+    "test": {"sheet": "YOUR_DEMO_SHEET_ID", "doc": "YOUR_DEMO_DOC_ID"},
+    "production": {"sheet": "YOUR_PRODUCTION_SHEET_ID", "doc": "YOUR_PRODUCTION_DOC_ID"}
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "gmail": {
+    "label_name": "Deals",
+    "first_run_lookback_days": 30,
+    "normal_run_window": "current_ic_week"
+  },
+  "newsletter_sources": {
+    "strictlyvc": {
+      "name": "StrictlyVC",
+      "match_terms": [
+        "StrictlyVC"
+      ],
+      "sections_to_extract": [
+        "Massive Fundings",
+        "Big-But-Not-Crazy-Big Fundings",
+        "Smaller Fundings"
+      ]
+    },
+    "term_sheet": {
+      "name": "Term Sheet",
+      "match_terms": [
+        "Term Sheet",
+        "Fortune"
+      ],
+      "sections_to_extract": [
+        "VENTURE DEALS",
+        "VENTURE CAPITAL"
+      ],
+      "has_company_homepage_links": true
+    },
+    "pro_rata": {
+      "name": "Pro Rata",
+      "match_terms": [
+        "Pro Rata",
+        "Axios"
+      ],
+      "sections_to_extract": [
+        "Venture Capital Deals"
+      ]
+    }
+  }
+}
