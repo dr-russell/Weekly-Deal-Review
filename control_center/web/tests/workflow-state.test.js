@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {decisionMatchesFilter, resultMessage, selectedRunWeek, sourceStatus} from '../src/workflow-state.js';
+import {decisionMatchesFilter, resultMessage, selectedRunWeek, sourceStatus, stageDuration} from '../src/workflow-state.js';
 
 test('the selected week follows an active background workflow', () => {
   assert.equal(selectedRunWeek({active_run:{week_id:'older-week'},weeks:[{id:'latest',status:'prepared'},{id:'older-week',status:'raw'}]}, 'latest'), 'older-week');
@@ -64,4 +64,12 @@ test('decision filters return the matching records without mutation', () => {
   assert.deepEqual(decisions.filter(d=>decisionMatchesFilter(d,'disagreed')).map(d=>d.id), ['both','disagreed']);
   assert.equal(decisions.filter(d=>decisionMatchesFilter(d,'all')).length,4);
   assert.equal(JSON.stringify(decisions),before);
+});
+
+test('sub-second stage timings display 0.1s without changing exact values', () => {
+  for (const seconds of [0,.003626,.05,.9,.999]) assert.equal(stageDuration(seconds),'0.1s');
+  assert.equal(stageDuration(1),'1.0s');
+  assert.equal(stageDuration(40.74),'40.7s');
+  assert.equal(stageDuration(null),'--');
+  assert.equal(stageDuration(undefined),'--');
 });

@@ -29,3 +29,8 @@ export function decisionMatchesFilter(decision, filter) {
   if (filter === 'disagreed') return disagreed;
   return true;
 }
+
+export function stageDuration(seconds) {
+  if (seconds == null) return '--';
+  return (seconds < 1 ? .1 : seconds).toFixed(1) + 's';
+}
