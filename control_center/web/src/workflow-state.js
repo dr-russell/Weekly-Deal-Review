@@ -18,3 +18,14 @@ export function sourceStatus(info, availability) {
   if (availability?.status === 'not_published') return {state:'not_published', reason:availability.reason || 'No newsletters this week, confirmed'};
   return {state:'unknown', reason:'No inputs captured; newsletter availability has not been confirmed'};
 }
+
+export function decisionMatchesFilter(decision, filter) {
+  const first = decision.first_pass;
+  const independent = decision.verification;
+  const uncertain = first?.fit === 'Maybe' || (Number.isFinite(first?.confidence) && first.confidence < .9);
+  const disagreed = Boolean(first && independent &&
+    (first.fit !== independent.fit || Boolean(first.known_investment) !== Boolean(independent.known_investment)));
+  if (filter === 'uncertain') return uncertain;
+  if (filter === 'disagreed') return disagreed;
+  return true;
+}
