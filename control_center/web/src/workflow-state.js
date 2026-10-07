@@ -34,3 +34,8 @@ export function stageDuration(seconds) {
   if (seconds == null) return '--';
   return (seconds < 1 ? .1 : seconds).toFixed(1) + 's';
 }
+
+export function runSectionExpanded(run, section, preference=null) {
+  if (typeof preference === 'boolean') return preference;
+  return section === 'audit' && ['running','failed','interrupted'].includes(run?.status);
+}
