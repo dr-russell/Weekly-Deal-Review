@@ -56,7 +56,7 @@ Mandate review -> route uncertain and high-risk decisions
 
 ## What Has Been Verified
 
-The latest local test run passed **126 backend tests and 23 frontend tests**.
+The latest local test run passed **144 backend tests and 25 frontend tests**.
 Tests cover routing, normalization, deduplication, currency handling, publication
 contracts, and interface state.
 

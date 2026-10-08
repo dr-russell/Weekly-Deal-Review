@@ -12,8 +12,31 @@ export function runForWeek(selectedRun, backgroundRun, week, savedReview=null) {
   return null;
 }
 
+export function runMatchesSelection(run, weeks) {
+  return Boolean(run&&weeks.length&&(run.metrics?.week_ids||[run.week_id]).slice().sort().join('|')===weeks.slice().sort().join('|'));
+}
+
+export function runForSelection(selectedRun, backgroundRun, weeks, savedReview=null) {
+  if(selectedRun?.kind==='review'&&runMatchesSelection(selectedRun,weeks))return selectedRun;
+  if(backgroundRun?.kind==='review'&&backgroundRun.status==='running'&&runMatchesSelection(backgroundRun,weeks))return backgroundRun;
+  if(savedReview?.kind==='review'&&runMatchesSelection(savedReview,weeks))return savedReview;
+  return null;
+}
+
+export function canEditSelectionReview(run,runs,weeks,ids) {
+  if(ids.length===1)return canEditReview(run,runs.filter(item=>runMatchesSelection(item,ids)),weeks.find(week=>week.id===ids[0]));
+  if(!['completed','local_completed'].includes(run?.status)||!runMatchesSelection(run,ids))return false;
+  const latest=runs.find(item=>item.kind==='review'&&['completed','local_completed'].includes(item.status)&&runMatchesSelection(item,ids));
+  return Boolean(latest?.id===run.id&&run.metrics?.prepared_versions&&ids.every(id=>{const week=weeks.find(week=>week.id===id);return week?.status==='prepared'&&run.metrics.prepared_versions[id]===week.updated_at}));
+}
+
 export function preparationForWeek(activeRun, pending, week) {
   return Boolean((activeRun?.status === 'running' && activeRun.kind !== 'review' && activeRun.week_id === week) || pending?.week_id === week);
+}
+
+export function preparationForWeeks(activeRun, pending, weeks) {
+  const overlaps=ids=>ids.some(id=>weeks.includes(id));
+  return Boolean((activeRun?.status==='running'&&activeRun.kind!=='review'&&overlaps(activeRun.metrics?.week_ids||[activeRun.week_id]))||(pending&&overlaps(pending.week_ids||[pending.week_id])));
 }
 
 export function datasetCounts(week, preparing) {
@@ -23,7 +46,7 @@ export function datasetCounts(week, preparing) {
 }
 
 export function runsForWeek(runs, week) {
-  return runs.filter(run => run.week_id === week);
+  return runs.filter(run => run.week_id === week || run.metrics?.week_ids?.includes(week));
 }
 
 export function canEditReview(run, runs, week) {

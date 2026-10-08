@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {canEditReview, datasetCounts, decisionMatchesFilter, evidenceGroups, preparationForWeek, resultMessage, runForWeek, runSectionExpanded, runsForWeek, selectedRunWeek, sourceStatus, stageDuration} from '../src/workflow-state.js';
+import {canEditReview, canEditSelectionReview, datasetCounts, decisionMatchesFilter, evidenceGroups, preparationForWeek, preparationForWeeks, resultMessage, runForSelection, runMatchesSelection, runForWeek, runSectionExpanded, runsForWeek, selectedRunWeek, sourceStatus, stageDuration} from '../src/workflow-state.js';
 
 test('evidence groups repeated pages and preserves every citation identifier', () => {
   const sources=[{id:'first',url:'https://example.com/news',quote:'A funding round'},{id:'second',url:'https://example.com/news/',quote:'A funding round'},{id:'third',url:'https://example.com/news#details',quote:'Another supporting excerpt'}];
@@ -191,4 +191,27 @@ test('both final dataset counts remain masked through preparation and overview r
   const fresh={...old,report:{duplicate_mentions:17},remaining_missing_count:0};
   assert.deepEqual(datasetCounts(fresh,preparationForWeek(complete,null,'a')),{duplicates:17,missing:0,available:true});
   assert.deepEqual(datasetCounts({...fresh,status:'raw'},false),{duplicates:'--',missing:'--',available:false});
+});
+
+test('batch preparation follows selected weeks without becoming a review result', () => {
+  const batch={id:'batch',kind:'prepare_batch',week_id:'a',status:'running',metrics:{week_ids:['a','b']}};
+  assert.equal(preparationForWeeks(batch,null,['b']),true);
+  assert.equal(preparationForWeeks(batch,null,['c']),false);
+  assert.equal(preparationForWeeks({...batch,status:'completed'},{week_ids:['a','b'],run_id:'batch'},['b']),true);
+  assert.equal(preparationForWeeks({...batch,kind:'review'},null,['a']),false);
+  assert.equal(runForWeek(batch,batch,'a',null),null);
+  assert.deepEqual(runsForWeek([batch],'b'),[batch]);
+});
+
+test('review results stay bound to the exact selected weeks',()=>{
+ const group={id:'combined',kind:'review',week_id:'a',status:'completed',metrics:{week_ids:['a','b'],prepared_versions:{a:'v1',b:'v2'}}};
+ const single={id:'single',kind:'review',week_id:'a',status:'completed',metrics:{prepared_at:'v1'}};
+ assert.equal(runMatchesSelection(group,['b','a']),true);
+ assert.equal(runForSelection(group,null,['a'],single),single);
+ assert.equal(runForSelection(null,null,['a','b'],single),null);
+ assert.equal(runForSelection(null,{...group,status:'running'},['a','b'],single).id,'combined');
+ const weeks=[{id:'a',status:'prepared',updated_at:'v1'},{id:'b',status:'prepared',updated_at:'v2'}];
+ assert.equal(canEditSelectionReview(group,[group,single],weeks,['a','b']),true);
+ assert.equal(canEditSelectionReview(group,[group,single],[weeks[0],{...weeks[1],updated_at:'changed'}],['a','b']),false);
+ assert.equal(canEditSelectionReview(single,[group,single],weeks,['a']),true);
 });

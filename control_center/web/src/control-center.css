@@ -1,0 +1,83 @@
+/* A compact, consistent layout for the weekly workflow. */
+.control-center {
+  max-width: 1180px;
+  padding: 16px 24px 20px;
+}
+.control-center .page-heading { margin-bottom: 16px; gap: 16px; }
+.control-center h1 { font-size: 24px; line-height: 1.25; }
+.control-center h2 { font-size: 16px; line-height: 1.4; }
+.control-center h3 { font-size: 13px; line-height: 1.4; }
+.control-center .page-heading p { margin-top: 4px; font-size: 12px; }
+.control-center .week-picker { gap: 8px; }
+.control-center .week-picker label { font-size: 10px; }
+.control-center .week-picker select { min-width: 196px; }
+.control-center .dataset-band,
+.control-center .run-band {
+  border: 0;
+  border-radius: 6px;
+  background: #fff;
+  padding: 14px;
+  margin-bottom: 12px;
+}
+.control-center .run-band { margin-bottom: 0; }
+.control-center .dataset-band .section-title { margin-bottom: 12px; }
+.control-center .dataset-summary { gap: 16px; }
+.control-center .dataset-summary > div { border: 0; padding: 0; }
+.control-center .dataset-summary span { min-height: 0; font-size: 11px; }
+.control-center .dataset-summary strong { margin-top: 4px; font-size: 22px; line-height: 1.25; }
+.control-center .dataset-summary .preparing-value { font-size: 14px; }
+.control-center .preparation-control { min-height: 32px; padding: 6px 10px; }
+.control-center .review-context { margin-bottom: 12px; font-size: 11px; }
+.control-center .run-top { gap: 16px; }
+.control-center .run-actions { gap: 16px; }
+.control-center .timer { min-width: 0; gap: 6px; }
+.control-center .timer strong { min-width: 0; font-size: 22px; }
+.control-center .target { margin-top: 4px; }
+.control-center .target select { font-size: 11px; }
+.control-center .primary { min-height: 36px; padding: 8px 12px; }
+.control-center .pipeline { padding: 16px 0 12px; gap: 4px; }
+.control-center .pipeline-step > span { width: 28px; height: 28px; margin-bottom: 6px; }
+.control-center .pipeline-step strong { font-size: 11px; line-height: 1.4; }
+.control-center .pipeline-step small { margin-top: 4px; font-size: 11px; }
+.control-center .pipeline-arrow { margin-top: 6px; }
+.control-center .run-band > small { font-size: 11px; line-height: 1.5; }
+.control-center .metric-grid {
+  border: 0;
+  background: #f5f8f6;
+  border-radius: 4px;
+  padding: 10px;
+  margin-top: 12px;
+  gap: 12px;
+}
+.control-center .metric-grid > div { border: 0; padding: 0; min-width: 0; }
+.control-center .metric-grid span { font-size: 11px; line-height: 1.4; min-height: 30px; }
+.control-center .metric-grid strong { margin-top: 4px; font-size: 22px; line-height: 1.25; }
+.control-center .result-line { border: 0; margin-top: 12px; padding-top: 0; font-size: 12px; }
+.control-center .run-details { border: 0; margin-top: 12px; }
+.control-center .run-detail-heading { border: 0; min-height: 32px; }
+.control-center .disclosure-button { min-height: 32px; padding: 6px 0; font-size: 13px; }
+.control-center .detail-count { font-size: 11px; }
+.control-center .run-band .outputs { border: 0; margin: 12px 0 0; padding: 0; }
+.control-center .outputs > div:not(.health) { margin: 8px 0; gap: 16px; flex-wrap: wrap; }
+.control-center .outputs a,
+.control-center .outputs .text-button { font-size: 12px; }
+.control-center .outputs small { font-size: 11px; line-height: 1.5; }
+.control-center .notice { margin-bottom: 16px; }
+.control-center .missing-panel,
+.control-center .run-details .events,
+.control-center .run-details .decision-band .table-scroll { max-height: 240px; }
+
+@media (min-width: 900px) {
+  .control-center .metric-grid span { min-height: 16px; }
+}
+@media (max-width: 760px) {
+  .control-center { padding: 16px; }
+  .control-center .page-heading { gap: 12px; }
+  .control-center .week-picker select { min-width: 0; }
+  .control-center .dataset-band,
+  .control-center .run-band { padding: 14px; }
+  .control-center .run-top { align-items: stretch; gap: 12px; }
+  .control-center .run-actions { gap: 12px; }
+  .control-center .pipeline-step strong { max-width: 78px; }
+  .control-center .metric-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}

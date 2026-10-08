@@ -74,8 +74,21 @@ matching. No credentials-free sample dataset is included. See the repository
 
 ## Corrections
 
-- Remaining Missing Fields counts unresolved cells in current normalized records,
-  not the original preparation report. Open the count to repair a specific field.
+The checkbox week selector is used in Control Center, Run History, and Deal
+Database. Click anywhere on a week row to toggle it. The selector shows a date
+range for one week or a selected count for multiple weeks. Choose multiple weeks
+to prepare only the unprepared inputs, see combined deduplicated counts, and Review & Publish the
+same selected dataset in one operation. Combined publications replace only the
+selected weeks, show one Stats row per selected week plus combined totals, and
+identify those weeks in the Doc. Each combined run preserves its selected input
+snapshots and exchange-rate sources for historical inspection.
+
+- Remaining Missing Fields counts missing cells that still need attention in
+  current normalized records, not the original preparation report. Open the count
+  to repair a field or mark it addressed with the circle icon. Show addressed in
+  the table header reveals muted rows with checked-circle icons; click an icon
+  again to reopen its field. Acknowledgments persist without changing field values
+  or publication completeness checks.
 - Edit at the top of the company panel makes its field rows directly editable.
   Fields are normalized and validated before saving; change notes and source
   URLs are optional. Save records changes in Correction History; Cancel discards
