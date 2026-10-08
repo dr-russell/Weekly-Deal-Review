@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from datetime import date
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -15,6 +15,7 @@ from .config import GOOGLE_TOKEN, MODEL, ROOT, TARGETS, TAXONOMY
 from .google import Publisher
 from .logic import completed_week, normalized_name, normalized_usd_amount, sheet_amount, normalize_round, remaining_missing_fields
 from .pipeline import import_history, register_week, run_job
+from .missing_review import missing_summary
 
 JOB_LOCK = threading.Lock()
 
@@ -49,8 +50,7 @@ def overview():
     for w in weeks:
         store.unpack(w, ["report"])
         w["sources"] = store.query("SELECT source,COUNT(DISTINCT message_id) AS emails,COUNT(*) AS source_items FROM blocks WHERE week_id=? GROUP BY source ORDER BY source", (w["id"],))
-        w["remaining_missing_fields"] = remaining_missing_fields(store.get_deals(w["id"]))
-        w["remaining_missing_count"] = len(w["remaining_missing_fields"])
+        w.update(missing_summary(store.get_deals(w["id"])))
     active = store.query("SELECT id,status,kind,week_id,stage FROM runs WHERE status='running' ORDER BY started_at DESC LIMIT 1")
     return {"weeks": weeks, "totals": {"deals": store.query("SELECT COUNT(*) AS n FROM deals WHERE active=1")[0]["n"], "emails": store.query("SELECT COUNT(*) AS n FROM messages")[0]["n"], "source_items": store.query("SELECT COUNT(*) AS n FROM blocks")[0]["n"]}, "active_run": active[0] if active else None, "model": MODEL, "targets": TARGETS, "google_authorized": GOOGLE_TOKEN.exists(), "production_enabled": os.environ.get("DEAL_ALLOW_PRODUCTION") == "1", "workspace": app.state.workspace, "field_options": {"sector": TAXONOMY, "growth_stage": ["Early", "Growth"], "round": ["Pre-seed", "Seed"] + ["Series " + chr(n) for n in range(ord("A"), ord("Z")+1)] + ["Early", "Growth"]}}
 
@@ -90,8 +90,22 @@ def run_company_detail(run_id: str, deal_id: str):
 
 @app.get("/api/weeks/{week_id}/latest-review")
 def latest_review(week_id: str):
-    rows = store.query("SELECT id FROM runs WHERE week_id=? AND kind='review' AND status IN ('completed','local_completed') ORDER BY started_at DESC LIMIT 1", (week_id,))
+    rows = store.query("SELECT id FROM runs WHERE week_id=? AND kind='review' AND status IN ('completed','local_completed') AND json_extract(metrics,'$.selection_key') IS NULL ORDER BY started_at DESC LIMIT 1", (week_id,))
     return store.get_run(rows[0]['id']) if rows else None
+
+
+@app.get("/api/dataset/latest-review")
+def latest_dataset_review(week_ids: list[str] = Query(...)):
+    from .dataset import selected_weeks
+    try:
+        weeks = selected_weeks(week_ids)
+    except ValueError as error:
+        raise HTTPException(422, str(error))
+    if len(weeks)==1:
+        return latest_review(weeks[0]["id"])
+    key = "|".join(sorted(week["id"] for week in weeks))
+    rows = store.query("SELECT id FROM runs WHERE kind='review' AND status IN ('completed','local_completed') AND json_extract(metrics,'$.selection_key')=? ORDER BY started_at DESC LIMIT 1", (key,))
+    return store.get_run(rows[0]["id"]) if rows else None
 
 
 @app.get("/api/deals")
@@ -104,7 +118,7 @@ def deals(week: str = "All", q: str = "", fit: str = "All"):
     values = store.get_deals(week)
     from .fx import prepared_rates
     ratebook, _ = prepared_rates(week)
-    latest = store.query("SELECT id FROM runs WHERE week_id=? AND kind='review' AND status IN ('completed','local_completed') ORDER BY started_at DESC LIMIT 1", (week,))
+    latest = store.query("SELECT id FROM runs r WHERE kind='review' AND status IN ('completed','local_completed') AND (week_id=? OR EXISTS(SELECT 1 FROM json_each(r.metrics,'$.week_ids') WHERE value=?)) ORDER BY started_at DESC LIMIT 1", (week,week))
     decisions = {r["deal_id"]: store.unpack(r, ["first_pass", "verification", "final"]) for r in store.query("SELECT * FROM decisions WHERE run_id=?", (latest[0]["id"],))} if latest else {}
     from .corrections import user_decision
     feedback = {r["deal_id"]: r for r in store.query("SELECT f.* FROM feedback f JOIN deals d ON d.id=f.deal_id WHERE d.week_id=? AND f.active=1 ORDER BY f.at", (week,))}
@@ -128,6 +142,20 @@ def deals(week: str = "All", q: str = "", fit: str = "All"):
     return result
 
 
+@app.get("/api/dataset/deals")
+def dataset_deals(week_ids: list[str] = Query(default=[]), q: str = "", fit: str = "All"):
+    from .dataset import selected_weeks
+    from .database import database_matches, dedupe_database
+    if not week_ids:
+        return []
+    try:
+        weeks = selected_weeks(week_ids)
+    except ValueError as error:
+        raise HTTPException(422, str(error))
+    records = dedupe_database([record for week in weeks for record in deals(week["id"])])
+    return [record for record in records if database_matches(record, q, fit)]
+
+
 @app.get("/api/deals/{deal_id}")
 def deal_detail(deal_id: str, run_id: str | None = None):
     rows = store.query("SELECT * FROM deals WHERE id=?", (deal_id,))
@@ -145,8 +173,11 @@ def deal_detail(deal_id: str, run_id: str | None = None):
     value["field_history"] = store.query("SELECT field,old_value,value,source_url,evidence_id,reason,at,active FROM field_overrides WHERE deal_id=? ORDER BY at DESC", (deal_id,))
     value["editable_fields"] = dict(value["fields"])
     week = store.query("SELECT status,updated_at FROM weeks WHERE id=?", (value["week_id"],))[0]
-    latest = store.query("SELECT id,metrics FROM runs WHERE week_id=? AND kind='review' AND status IN ('completed','local_completed') ORDER BY started_at DESC LIMIT 1", (value["week_id"],))
-    value["editable_run_id"] = latest[0]["id"] if latest and json.loads(latest[0]["metrics"]).get("prepared_at") in {None, week["updated_at"]} else None
+    from .corrections import latest_record_review, prepared_versions_match
+    with store.connection() as db:
+        latest_row = latest_record_review(db, deal_id)
+        latest = [dict(latest_row)] if latest_row else []
+        value["editable_run_id"] = latest[0]["id"] if latest and prepared_versions_match(db, latest[0]) else None
     value["editable"] = bool(value.get("active", True) and week["status"] == "prepared" and (not run_id or run_id == value["editable_run_id"]))
     if run_id:
         value["decisions"].sort(key=lambda d: d["run_id"] != run_id)
@@ -173,6 +204,52 @@ class Job(BaseModel):
     kind: Literal["prepare", "review"]
     target: Literal["test", "local", "production"] = "test"
     collect: bool = False
+    week_ids: list[str] | None = Field(default=None, min_length=1)
+
+
+class DatasetJob(BaseModel):
+    week_ids: list[str] = Field(min_length=1)
+    collect: bool = True
+
+
+@app.get("/api/dataset")
+def selected_dataset(week_ids: list[str] = Query(...)):
+    from .dataset import dataset_summary
+    try:
+        return dataset_summary(week_ids)
+    except ValueError as error:
+        raise HTTPException(422, str(error))
+
+
+@app.post("/api/dataset/prepare")
+def prepare_dataset(item: DatasetJob):
+    from .dataset import dataset_summary, prepare_selected
+    if not app.state.workspace["allow_preparation"]:
+        raise HTTPException(403, "Dataset preparation is disabled in this workspace")
+    if not JOB_LOCK.acquire(blocking=False):
+        raise HTTPException(409, "Another workflow is running")
+    try:
+        if store.query("SELECT id FROM runs WHERE status='running'"):
+            raise HTTPException(409, "Another workflow is running")
+        try:
+            summary = dataset_summary(item.week_ids)
+        except ValueError as error:
+            raise HTTPException(422, str(error))
+        if not summary["pending_weeks"]:
+            JOB_LOCK.release()
+            return {"run_id": None, "prepared": True}
+        run_id = store.new_run(summary["pending_weeks"][0], "prepare_batch", "local")
+        store.update_run(run_id, metrics={"week_ids": summary["week_ids"]})
+    except Exception:
+        JOB_LOCK.release()
+        raise
+    def worker():
+        try:
+            prepare_selected(run_id, summary["week_ids"], item.collect)
+        finally:
+            JOB_LOCK.release()
+    threading.Thread(target=worker, daemon=False, name="dataset-preparation").start()
+    return {"run_id": run_id, "accepted_at": store.now()}
 
 
 @app.post("/api/jobs")
@@ -181,6 +258,18 @@ def start_job(job: Job):
         raise HTTPException(403, "That publication destination is disabled in this workspace")
     if job.kind == "prepare" and not app.state.workspace["allow_preparation"]:
         raise HTTPException(403, "Dataset preparation is disabled in this workspace")
+    selection = None
+    if job.week_ids:
+        from .dataset import selected_weeks
+        if job.kind != "review":
+            raise HTTPException(422, "Use dataset preparation for multiple weeks")
+        try:
+            selection = selected_weeks(job.week_ids)
+        except ValueError as error:
+            raise HTTPException(422, str(error))
+        if any(item["status"] != "prepared" for item in selection):
+            raise HTTPException(409, "Prepare every selected week before reviewing")
+        job = job.model_copy(update={"week_id": selection[0]["id"]})
     week = store.query("SELECT * FROM weeks WHERE id=?", (job.week_id,))
     if not week:
         raise HTTPException(404, "Week not found")
@@ -193,8 +282,12 @@ def start_job(job: Job):
     run_id = None
     try:
         run_id = store.new_run(job.week_id, job.kind, job.target)
+        if selection and len(selection)>1:
+            ids = [item["id"] for item in selection]
+            store.update_run(run_id, metrics={"week_ids": ids, "selection_key": "|".join(sorted(ids))})
         if app.state.before_job:
-            app.state.before_job(job)
+            for item in selection or week:
+                app.state.before_job(job.model_copy(update={"week_id": item["id"], "week_ids": None}))
     except Exception as error:
         if run_id:
             store.update_run(run_id, status="failed", finished_at=store.now(), error=str(getattr(error, "detail", error)))
@@ -202,7 +295,10 @@ def start_job(job: Job):
         raise
     def worker():
         try:
-            run_job(run_id, job.week_id, job.kind, job.target, job.collect)
+            if selection and len(selection)>1:
+                run_job(run_id, job.week_id, job.kind, job.target, job.collect, week_ids=[item["id"] for item in selection])
+            else:
+                run_job(run_id, job.week_id, job.kind, job.target, job.collect)
         finally:
             JOB_LOCK.release()
     threading.Thread(target=worker, daemon=False, name="deal-workflow").start()
@@ -241,6 +337,25 @@ class FieldCorrection(BaseModel):
 class RecordDecisionCorrection(DecisionCorrection):
     expected_final: dict | None = None
     expected_fields: dict[str, str]
+
+
+class MissingFieldAddressed(BaseModel):
+    field: str
+    addressed: bool
+    week_ids: list[str]
+
+
+@app.post("/api/deals/{deal_id}/missing-addressed")
+def missing_field_addressed(deal_id: str, item: MissingFieldAddressed):
+    from .missing_review import set_addressed
+    if not JOB_LOCK.acquire(blocking=False):
+        raise HTTPException(409, "Another workflow is running")
+    try:
+        return set_addressed(deal_id, item.field, item.addressed, item.week_ids)
+    except ValueError as error:
+        raise HTTPException(422, str(error))
+    finally:
+        JOB_LOCK.release()
 
 
 @app.post("/api/deals/{deal_id}/decision")

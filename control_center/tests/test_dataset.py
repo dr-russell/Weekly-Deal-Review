@@ -32,7 +32,7 @@ class DatasetTests(unittest.TestCase):
         week = {"id": "week", "report": '{"missing_fields":16}'}
         item = record()
         item["fields"]["geography"] = ""
-        with patch.object(app.store, "query", side_effect=[[week], [], [], [{"n": 1}], [{"n": 0}], [{"n": 0}]]), patch.object(app.store, "get_deals", return_value=[item]) as get_deals:
+        with patch.object(app.store, "query", side_effect=[[week], [], [], [], [{"n": 1}], [{"n": 0}], [{"n": 0}]]), patch.object(app.store, "get_deals", return_value=[item]) as get_deals:
             result = app.overview()["weeks"][0]
         get_deals.assert_called_once_with("week")
         self.assertEqual(result["remaining_missing_count"], 1)

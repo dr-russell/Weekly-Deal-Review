@@ -264,6 +264,29 @@ def preserve_financing_caveats(deal):
     return {"field": "amount", "old": old, "value": deal["fields"]["amount"], "reason": "Preserved source financing context; Capital Announced is not verified cash closed", "evidence_id": caveat["evidence_id"], "kind": caveat["kind"]}
 
 
+def canonical_company_name(name, website):
+    if normalized_name(name) == "actsecurity" and company_domain(website) == "act.security":
+        return "Act Security"
+    return name
+
+
+def specific_round_amount(amount, round):
+    """Use an explicit round breakdown instead of its combined headline total."""
+    if not re.search(r"(?i)\b(?:combined|across|total)\b", amount):
+        return amount
+    if re.search(r"(?i)\b(?:debt|grant|commitment|valuation|anticipated|conditional)\b", amount):
+        return amount
+    breakdown = []
+    for money in MONEY_OCCURRENCE.finditer(amount):
+        label = re.match(r"\s+(pre[- ]seed|seed|series\s+[A-Z])\b", amount[money.end():], re.I)
+        if label:
+            breakdown.append((normalize_round(label[1], "Early"), money[0]))
+    matches = [value for label, value in breakdown if label == round]
+    if len({label for label, _ in breakdown}) > 1 and len(matches) == 1:
+        return matches[0]
+    return amount
+
+
 def normalize_fields(fields):
     result = {k: str(fields.get(k) or "").strip() for k in FIELDS}
     for key in ["website", "announcement_link"]:
@@ -271,6 +294,7 @@ def normalize_fields(fields):
     if result["website"] and not company_domain(result["website"]):
         result["website"] = ""
     result["round"] = normalize_round(result["round"], result["growth_stage"])
+    result["amount"] = specific_round_amount(result["amount"], result["round"])
     result["geography"] = normalize_geography(result["geography"])
     return result
 

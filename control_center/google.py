@@ -64,7 +64,18 @@ def amount_key(company, day):
     return normalized_name(company) + '|' + day
 
 
+def selected_day(package, day):
+    return any(period["start"]<=day<=period["end"] for period in package.get("selection_weeks", [{"start":package["start"], "end":package["end"]}]))
+
+
+def period_text(package):
+    periods = package.get("selection_weeks", [])
+    return "Selected IC weeks: " + "; ".join(period["start"]+" to "+period["end"] for period in periods) + "\n" if periods else ""
+
+
 def stats_for(package, historical):
+    if package.get("week_stats"):
+        return [[period["start"]+" to "+period["end"], period["count"], round(period["capital_usd_m"],4)] for period in package["week_stats"]], []
     end = date.fromisoformat(package["end"])
     table = []
     excluded = []
@@ -94,12 +105,14 @@ def build_sheet(package, snapshot):
     tabs = {s["properties"]["title"]: s["properties"] for s in snapshot["meta"]["sheets"]}
     list_id, stats_id = tabs["List"]["sheetId"], tabs["Stats"]["sheetId"]
     old = snapshot["values"].get("values", [])
-    if not old or padded(old[0]) != HEADERS:
+    selection_headers = ["Current Selection?"] + HEADERS[1:]
+    if not old or padded(old[0]) not in [HEADERS, selection_headers]:
         raise ValueError("Google List column headers do not match the expected A:N schema")
-    remove = [i for i, row in enumerate(old[1:], 1) if len(row) > 2 and package["start"] <= sheet_date(row[2]) <= package["end"]]
+    remove = [i for i, row in enumerate(old[1:], 1) if len(row) > 2 and selected_day(package,sheet_date(row[2]))]
     if any(len(row) > 13 and row[13] == "Maybe" for i, row in enumerate(old[1:], 1) if i not in remove):
         raise ValueError("Historical Maybe rows remain outside this week; do not silently publish an unresolved review sheet")
     requests = [{"clearBasicFilter": {"sheetId": list_id}}]
+    requests.append({"updateCells":{"start":{"sheetId":list_id,"rowIndex":0,"columnIndex":0},"rows":[{"values":[{"userEnteredValue":{"stringValue":"Current Selection?" if package.get("selection_weeks") else HEADERS[0]}}]}],"fields":"userEnteredValue"}})
     # Delete bottom-up, then insert the immutable final week in one atomic Sheet batch.
     for i in reversed(remove):
         requests.append({"deleteDimension": {"range": {"sheetId": list_id, "dimension": "ROWS", "startIndex": i, "endIndex": i + 1}}})
@@ -150,22 +163,40 @@ def build_sheet(package, snapshot):
             row[6] = display
             retained[i - n - 1] = row
     table, excluded = stats_for(package, retained)
+    previous_stats_end = 5
     requests.append({"updateCells":{"start":{"sheetId":stats_id,"rowIndex":0,"columnIndex":2},"rows":[{"values":[{"userEnteredValue":{"stringValue":"Capital Announced"}}]}],"fields":"userEnteredValue"}})
-    requests.append({"updateCells":{"start":{"sheetId":stats_id,"rowIndex":2,"columnIndex":4},"rows":[{"values":[{"userEnteredValue":{"stringValue":"Capital announced this week"}}]}],"fields":"userEnteredValue"}})
+    for row,label in [(1,"Deals in selected weeks" if package.get("selection_weeks") else "Deals this week"),(2,"Capital announced selected weeks" if package.get("selection_weeks") else "Capital announced this week")]:
+        requests.append({"updateCells":{"start":{"sheetId":stats_id,"rowIndex":row,"columnIndex":4},"rows":[{"values":[{"userEnteredValue":{"stringValue":label}}]}],"fields":"userEnteredValue"}})
     for col, width in [(1,130),(2,170),(4,230),(5,100)]:
         requests.append({'updateDimensionProperties':{'range':{'sheetId':stats_id,'dimension':'COLUMNS','startIndex':col,'endIndex':col+1},'properties':{'pixelSize':width},'fields':'pixelSize'}})
     for tab in snapshot['meta']['sheets']:
         for chart in tab.get('charts', []):
-            if chart.get('spec', {}).get('title', '').startswith('Capital Deployed'):
-                spec = copy.deepcopy(chart['spec'])
+            spec = copy.deepcopy(chart.get('spec',{}))
+            changed = False
+            def resize_ranges(value):
+                nonlocal previous_stats_end,changed
+                if isinstance(value,dict):
+                    if value.get('sheetId')==stats_id and value.get('startRowIndex') in {0,1} and value.get('startColumnIndex',99)<3 and value.get('endColumnIndex',99)<=3:
+                        previous_stats_end=max(previous_stats_end,value.get('endRowIndex',5))
+                        if value.get('endRowIndex')!=len(table)+1:
+                            value['endRowIndex']=len(table)+1;changed=True
+                    else:
+                        for nested in value.values():resize_ranges(nested)
+                elif isinstance(value,list):
+                    for nested in value:resize_ranges(nested)
+            resize_ranges(spec)
+            if spec.get('title', '').startswith('Capital Deployed'):
                 spec['title'] = 'Capital Announced by IC Week'
+                changed = True
                 for axis in spec.get('basicChart', {}).get('axis', []):
                     if axis.get('position') == 'LEFT_AXIS':
                         axis['title'] = 'Capital announced'
+            if changed:
                 requests.append({'updateChartSpec':{'chartId':chart['chartId'], 'spec':spec}})
+    requests.append({"repeatCell":{"range":{"sheetId":stats_id,"startRowIndex":1,"endRowIndex":max(previous_stats_end,len(table)+1),"startColumnIndex":0,"endColumnIndex":3},"cell":{},"fields":"userEnteredValue"}})
     for row, col, values in [(1, 0, table), (1, 5, [[n], [package["stats"]["capital_usd_m"]]])]:
         requests.append({"updateCells": {"start": {"sheetId": stats_id, "rowIndex": row, "columnIndex": col}, "rows": [{"values": [{"userEnteredValue": {"numberValue": value} if isinstance(value, (int, float)) else {"stringValue": value}} for value in line]} for line in values], "fields": "userEnteredValue"}})
-    for a, b, col in [(1, 5, 2), (2, 3, 5)]:
+    for a, b, col in [(1, len(table)+1, 2), (2, 3, 5)]:
         requests.append({"repeatCell": {"range": {"sheetId": stats_id, "startRowIndex": a, "endRowIndex": b, "startColumnIndex": col, "endColumnIndex": col + 1}, "cell": {"userEnteredFormat": {"numberFormat": {"type": "NUMBER", "pattern": '$0"M"'}}}, "fields": "userEnteredFormat.numberFormat"}})
     total = len(old) - len(remove) + n
     requests.extend([
@@ -279,10 +310,20 @@ def build_doc(package, doc):
     def rng(a, b):
         return {"tabId": "t.0", "startIndex": a, "endIndex": b}
     edits, groups = [], []
+    period = period_text(package)
+    existing_period = next((element for element in content if "paragraph" in element and paragraph_text(element).startswith("Selected IC weeks: ") and element["startIndex"]<early["startIndex"]), None)
+    period_delta = 0
+    if period or existing_period:
+        if existing_period and any(any(key in run for key in protected) for run in existing_period["paragraph"]["elements"]):
+            raise ValueError("Protected native element in the selected-period label")
+        a = existing_period["startIndex"] if existing_period else early["startIndex"]
+        b = existing_period["endIndex"] if existing_period else a
+        edits.append((a,b,period))
+        period_delta = u16(period)-(b-a)
     for stage, a, b in [("Early", early["endIndex"], growth["startIndex"]), ("Growth", growth["endIndex"], market["startIndex"])]:
         lines = [blurb(row) for row in package["rows"] if row[1] == stage]
         if not lines:
-            lines = [("N/A - no relevant deals this week\n", [])]
+            lines = [("N/A - no relevant deals in selected weeks\n" if period else "N/A - no relevant deals this week\n", [])]
         text = "".join(line for line, _ in lines)
         groups.append({"a": a, "b": b, "text": text, "lines": lines})
         edits.append((a, b, text))
@@ -304,8 +345,15 @@ def build_doc(package, doc):
     for a, b, text in sorted(edits, key=lambda x: x[0], reverse=True):
         if b > a:
             requests.append({"deleteContentRange": {"range": rng(a, b)}})
-        requests.append({"insertText": {"location": {"tabId": "t.0", "index": a}, "text": text}})
-    delta = 0
+        if text:
+            requests.append({"insertText": {"location": {"tabId": "t.0", "index": a}, "text": text}})
+    delta = period_delta
+    if period:
+        a = existing_period["startIndex"] if existing_period else early["startIndex"]
+        requests.extend([
+            {"updateParagraphStyle":{"range":rng(a,a+u16(period)),"paragraphStyle":{"namedStyleType":"NORMAL_TEXT","keepWithNext":True},"fields":"namedStyleType,keepWithNext"}},
+            {"updateTextStyle":{"range":rng(a,a+u16(period)),"textStyle":{"fontSize":{"magnitude":10,"unit":"PT"},"bold":False},"fields":"fontSize,bold,link"}},
+        ])
     for group in groups:
         a = group["a"] + delta
         b = a + u16(group["text"])
@@ -415,10 +463,10 @@ class Publisher:
             displayed[6] = sheet_amount(str(displayed[6]))
             if actual[1:] != displayed[1:]:
                 raise ValueError(f"Published Sheet fields differ for {wanted[3]}")
-        with AuthorizedSession(self.creds) as session:
-            stats = request(session, "GET", self.sheet_url + "/values:batchGet", params={"ranges": ["Stats!A2:C5", "Stats!F2:F3"], "valueRenderOption": "UNFORMATTED_VALUE"})
-        tables = stats.get("valueRanges", [])
         expected_table, _ = stats_for(package, snapshot["values"].get("values", [])[1:])
+        with AuthorizedSession(self.creds) as session:
+            stats = request(session, "GET", self.sheet_url + "/values:batchGet", params={"ranges": [f"Stats!A2:C{len(expected_table)+1}", "Stats!F2:F3"], "valueRenderOption": "UNFORMATTED_VALUE"})
+        tables = stats.get("valueRanges", [])
         if len(tables) != 2 or tables[0].get("values") != expected_table or tables[1].get("values") != [[package["stats"]["count"]], [package["stats"]["capital_usd_m"]]]:
             raise ValueError("Published Sheet Stats differ from package")
         content = document_tab(doc)["body"]["content"]
@@ -426,7 +474,9 @@ class Publisher:
         a, b = heading["Early Stage Deals:"]["endIndex"], heading["Market Stats:"]["startIndex"]
         deal_paragraphs = [e for e in content if a <= e.get("startIndex", 0) < b and e.get("paragraph", {}).get("bullet") is not None]
         expected_lines = [blurb(row)[0] for stage in ["Early", "Growth"] for row in package["rows"] if row[1] == stage]
-        expected_lines += ["N/A - no relevant deals this week\n" for stage in ["Early", "Growth"] if not any(row[1] == stage for row in package["rows"])]
+        expected_lines += ["N/A - no relevant deals in selected weeks\n" if package.get("selection_weeks") else "N/A - no relevant deals this week\n" for stage in ["Early", "Growth"] if not any(row[1] == stage for row in package["rows"])]
+        if period_text(package) and sum(paragraph_text(element)==period_text(package) for element in content if "paragraph" in element)!=1:
+            raise ValueError("Roundup selected-period label differs from the reviewed weeks")
         if sorted(paragraph_text(e) for e in deal_paragraphs) != sorted(expected_lines):
             raise ValueError("Published roundup deal text differs from package")
         for element in deal_paragraphs:

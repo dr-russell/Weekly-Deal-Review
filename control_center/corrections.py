@@ -36,6 +36,12 @@ def rebuild_package(run, week, deals, decisions):
     if errors:
         raise CorrectionError("Selected-row validation failed: " + "; ".join(errors), 422)
     package = make_package(deals, decisions, week["start"], week["end"], run["package"].get("fx_rates", {}))
+    periods = run["package"].get("selection_weeks", [])
+    if periods:
+        if any(not any(period["start"]<=deal["fields"]["deal_date"]<=period["end"] for period in periods) for deal in deals):
+            raise CorrectionError("Financing date falls outside the selected weeks", 422)
+        from .dataset import add_selection_package
+        add_selection_package(package, deals, decisions, periods)
     selected = [d for d in deals if decisions[d["id"]]["fit"] == "Yes" and not decisions[d["id"]].get("known_investment") and week["start"] <= d["fields"]["deal_date"] <= week["end"]]
     changed_outputs = package["rows"] != run["package"]["rows"] or any(package["stats"][key] != run["package"]["stats"][key] for key in ["count", "capital_usd_m"])
     metrics = {**run["metrics"], **package["stats"], "excluded": sum(d["fit"] == "No" and not d.get("known_investment") for d in decisions.values()), "known_investments": sum(bool(d.get("known_investment")) for d in decisions.values()), "manual_corrections": sum(bool(d.get("manual_override")) for d in decisions.values()), "outputs_dirty": run["target"] != "local" and (run["metrics"].get("outputs_dirty", False) or changed_outputs)}
@@ -63,6 +69,20 @@ class CorrectionError(ValueError):
         self.status = status
 
 
+def prepared_versions_match(db, run):
+    metrics = run["metrics"] if isinstance(run["metrics"], dict) else json.loads(run["metrics"])
+    versions = metrics.get("prepared_versions")
+    if versions:
+        rows = db.execute("SELECT id,status,updated_at FROM weeks WHERE id IN ("+",".join("?" for _ in versions)+")", list(versions)).fetchall()
+        return len(rows)==len(versions) and all(row["status"]=="prepared" and row["updated_at"]==versions[row["id"]] for row in rows)
+    week = db.execute("SELECT updated_at FROM weeks WHERE id=?", (run["week_id"],)).fetchone()
+    return metrics.get("prepared_at") in {None, week["updated_at"]}
+
+
+def latest_record_review(db, deal_id):
+    return db.execute("SELECT r.* FROM runs r JOIN decisions d ON d.run_id=r.id WHERE d.deal_id=? AND r.kind='review' AND r.status IN ('completed','local_completed') ORDER BY r.started_at DESC,r.rowid DESC LIMIT 1", (deal_id,)).fetchone()
+
+
 def editable_run(db, run_id):
     row = db.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
     if not row:
@@ -72,14 +92,18 @@ def editable_run(db, run_id):
         raise CorrectionError("Only completed reviews can be corrected")
     if not isinstance(run["package"], dict):
         raise CorrectionError("This review has no finalized publication package")
-    latest = db.execute("SELECT id FROM runs WHERE week_id=? AND kind='review' AND status IN ('completed','local_completed') ORDER BY started_at DESC,rowid DESC LIMIT 1", (run["week_id"],)).fetchone()
+    key = run["metrics"].get("selection_key")
+    latest = db.execute("SELECT id FROM runs WHERE kind='review' AND status IN ('completed','local_completed') AND json_extract(metrics,'$.selection_key')=? ORDER BY started_at DESC,rowid DESC LIMIT 1", (key,)).fetchone() if key else db.execute("SELECT id FROM runs WHERE week_id=? AND kind='review' AND status IN ('completed','local_completed') AND json_extract(metrics,'$.selection_key') IS NULL ORDER BY started_at DESC,rowid DESC LIMIT 1", (run["week_id"],)).fetchone()
     if latest["id"] != run_id:
         raise CorrectionError("Open this week's latest completed review to make changes")
     if db.execute("SELECT id FROM runs WHERE status='running'").fetchone():
         raise CorrectionError("Wait for the running workflow to finish before making changes")
     week = dict(db.execute("SELECT * FROM weeks WHERE id=?", (run["week_id"],)).fetchone())
-    if run["metrics"].get("prepared_at") and run["metrics"]["prepared_at"] != week["updated_at"]:
+    if not prepared_versions_match(db, run):
         raise CorrectionError("Prepared inputs changed since this review; review the updated week first")
+    if run["package"].get("selection_weeks"):
+        periods = run["package"]["selection_weeks"]
+        week.update(start=min(period["start"] for period in periods), end=max(period["end"] for period in periods))
     return run, week
 
 
@@ -163,7 +187,7 @@ def correct_record_decision(deal_id, fit, reason, source_url, evidence_id, expec
             if week["status"] != "prepared":
                 raise CorrectionError("Prepare the dataset before editing its records")
             source_url = correction_source(deal, source_url, evidence_id)
-            latest = db.execute("SELECT * FROM runs WHERE week_id=? AND kind='review' AND status IN ('completed','local_completed') ORDER BY started_at DESC,rowid DESC LIMIT 1", (deal["week_id"],)).fetchone()
+            latest = latest_record_review(db, deal_id)
             decision_row = db.execute("SELECT final FROM decisions WHERE run_id=? AND deal_id=?", (latest["id"], deal_id)).fetchone() if latest else None
             model = json.loads(decision_row["final"]) if decision_row else None
             feedback = db.execute("SELECT * FROM feedback WHERE deal_id=? AND active=1 ORDER BY at DESC,rowid DESC LIMIT 1", (deal_id,)).fetchone()
@@ -172,7 +196,7 @@ def correct_record_decision(deal_id, fit, reason, source_url, evidence_id, expec
                 raise CorrectionError("This decision changed since you opened it; reload and try again")
             if deal["portfolio_match"].get("status") == "known" or (previous and previous.get("known_investment")):
                 raise CorrectionError("Portfolio exclusions are separate from mandate fit and cannot be changed here")
-            current_run = latest and decision_row and json.loads(latest["metrics"]).get("prepared_at") in {None, week["updated_at"]}
+            current_run = latest and decision_row and prepared_versions_match(db, latest)
             if not current_run:
                 if previous and previous["fit"] == fit and not reason.strip() and not source_url and not evidence_id:
                     raise CorrectionError("No decision values changed", 422)
@@ -205,12 +229,12 @@ def correct_fields(deal_id, changes, reason, source_url, evidence_id, expected_f
         source_url = correction_source(deal, source_url, evidence_id)
         run = None
         if not run_id:
-            latest = db.execute("SELECT id,metrics FROM runs WHERE week_id=? AND kind='review' AND status IN ('completed','local_completed') ORDER BY started_at DESC LIMIT 1", (deal["week_id"],)).fetchone()
-            if latest and json.loads(latest["metrics"]).get("prepared_at") in {None, week["updated_at"]}:
+            latest = latest_record_review(db, deal_id)
+            if latest and prepared_versions_match(db, latest):
                 run_id = latest["id"]
         if run_id:
             run, _ = editable_run(db, run_id)
-            if run["week_id"] != deal["week_id"]:
+            if deal["week_id"] not in run["metrics"].get("week_ids", [run["week_id"]]):
                 raise CorrectionError("Correction belongs to another week")
         before = dict(deal["fields"])
         normalized = normalize_fields({**before, **changes})
@@ -262,7 +286,11 @@ def correct_fields(deal_id, changes, reason, source_url, evidence_id, expected_f
         prepared_at = sync_prepared(db, week)
         detail = {"deal_id": deal_id, "changes": [{"field": k, "old": before[k], "value": v} for k, v in changed.items()], "reason": reason, "source_url": source_url, "evidence_id": evidence_id, "google_updated": False}
         if run:
-            metrics["prepared_at"] = prepared_at
+            if metrics.get("prepared_versions"):
+                metrics["prepared_versions"][deal["week_id"]] = prepared_at
+                metrics["prepared_at"] = metrics["prepared_versions"][run["week_id"]]
+            else:
+                metrics["prepared_at"] = prepared_at
             for record in records:
                 db.execute("INSERT INTO review_records(run_id,deal_id,record) VALUES(?,?,?) ON CONFLICT(run_id,deal_id) DO UPDATE SET record=excluded.record", (run_id, record["id"], store.encode(record)))
             db.execute("UPDATE runs SET package=?,metrics=? WHERE id=?", (store.encode(package), store.encode(metrics), run_id))

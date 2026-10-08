@@ -5,7 +5,7 @@ import subprocess
 import time
 import uuid
 
-from jsonschema import validate
+from jsonschema import validate, ValidationError
 
 from .config import ARTIFACTS, ROOT
 
@@ -38,6 +38,20 @@ ENRICHMENT_SCHEMA = object_schema({"deals": {"type": "array", "items": object_sc
 })}})
 
 
+class ModelOutputError(ValueError):
+    def __init__(self, message, metadata):
+        super().__init__(message)
+        self.model_metadata = metadata
+
+
+def review_output_schema(ids, independent=False):
+    schema = copy.deepcopy(BINARY_DECISION_SCHEMA if independent else DECISION_SCHEMA)
+    decisions = schema["properties"]["decisions"]
+    decisions.update(minItems=len(ids), maxItems=len(ids))
+    decisions["items"]["properties"]["id"] = {"type": "string", "enum": list(ids)}
+    return schema
+
+
 def run_model(prompt, schema, model, label, research=False, timeout=240, reasoning_effort="low"):
     folder = ARTIFACTS / label / uuid.uuid4().hex[:10]
     folder.mkdir(parents=True)
@@ -59,7 +73,6 @@ def run_model(prompt, schema, model, label, research=False, timeout=240, reasoni
     if result.returncode:
         raise RuntimeError(f"Model job {label} failed ({result.returncode}): {result.stderr[-700:]}")
     output = json.loads((folder / "output.json").read_text())
-    validate(output, schema)
     usage, web_calls, forbidden = {}, 0, []
     for line in result.stdout.splitlines():
         try:
@@ -78,6 +91,12 @@ def run_model(prompt, schema, model, label, research=False, timeout=240, reasoni
         raise RuntimeError(f"Model used a tool outside its review contract: {forbidden}")
     artifact = folder.relative_to(ROOT) if folder.is_relative_to(ROOT) else folder
     metadata = {"model": model, "reasoning_effort": reasoning_effort, "seconds": round(time.perf_counter() - started, 3), "usage": usage, "web_calls": web_calls, "artifact": str(artifact), "status": "completed"}
+    try:
+        validate(output, schema)
+    except ValidationError as error:
+        metadata.update(status="invalid_output", validation_error=error.message)
+        (folder / "metadata.json").write_text(json.dumps(metadata))
+        raise ModelOutputError("Model output failed schema validation: " + error.message, metadata) from error
     (folder / "metadata.json").write_text(json.dumps(metadata))
     return output, metadata
 
@@ -125,7 +144,7 @@ def usage_totals(jobs):
     for job in jobs:
         model = job["model"]
         item = totals.setdefault(model, {"jobs": 0, "input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0, "web_calls": 0})
-        item["jobs"] += 1
+        item["jobs"] += job.get("attempt_count", 1)
         for key in ["input_tokens", "cached_input_tokens", "output_tokens"]:
             item[key] += job.get("usage", {}).get(key, 0)
         item["web_calls"] += job.get("web_calls", 0)

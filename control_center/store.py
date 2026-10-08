@@ -85,6 +85,10 @@ def initialize():
             at TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1
         );
         CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS addressed_missing_fields (
+            deal_id TEXT NOT NULL REFERENCES deals(id), field TEXT NOT NULL,
+            at TEXT NOT NULL, PRIMARY KEY(deal_id,field)
+        );
         CREATE TABLE IF NOT EXISTS review_records (
             run_id TEXT NOT NULL REFERENCES runs(id), deal_id TEXT NOT NULL REFERENCES deals(id),
             record TEXT NOT NULL, PRIMARY KEY(run_id,deal_id)
