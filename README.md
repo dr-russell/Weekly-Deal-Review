@@ -47,10 +47,16 @@ Mandate review -> route uncertain and high-risk decisions
   not verified cash closed.
 - **Audit and feedback:** sources, decisions, corrections, unavailable fields,
   model usage, timestamps, and input hashes remain in local records.
+- **User corrections:** repair missing or incorrect fields from the dataset or
+  company panel, and change final mandate fit from Decisions or the same panel.
+  Evidence and correction notes are retained with the original AI checks. Local
+  totals update immediately; fit-affecting edits require confirmation or a
+  targeted company recheck. Refresh Outputs republishes the corrected package.
+  Historical evaluation continues scoring the original model decision.
 
 ## What Has Been Verified
 
-The latest local test run passed **67 backend tests and 13 frontend tests**.
+The latest local test run passed **115 backend tests and 23 frontend tests**.
 Tests cover routing, normalization, deduplication, currency handling, publication
 contracts, and interface state.
 
@@ -79,9 +85,10 @@ docs/                Handoff, operating notes, and publication-readiness review
 
 Start with the [Control Center setup and architecture](control_center/README.md).
 The app is local-only and production publishing is disabled by default.
-**A fresh clone is not yet a standalone demo:** it requires private reference
-assets, Google authorization, and an authenticated Codex CLI. Those assets are
-intentionally excluded; this repository does not ship a synthetic demo dataset.
+The app starts without private historical assets. To process real deals, configure
+Google authorization and authenticate the Codex CLI. Historical newsletter
+archives and portfolio snapshots are optional local inputs and intentionally
+excluded; this repository does not ship a synthetic dataset.
 
 The Control Center owns its extraction, research, review, verification, and
 publication code. Follow [AGENTS.md](AGENTS.md) for development guidance.

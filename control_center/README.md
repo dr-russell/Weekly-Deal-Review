@@ -40,12 +40,21 @@ npm run build
 
 After backend edits, let any active workflow finish before restarting the server.
 
+Geography uses full state/province and country names (for example,
+`New York, New York, United States`). Region aliases are scoped to their country;
+unknown or ambiguous locations are preserved rather than inferred. To preview a
+backfill, run `control_center/.venv/bin/python -m control_center.manage normalize-geography`;
+add `--apply` to save it, or `--week WEEK_ID` to limit it to one week. The backfill
+creates a database backup, records old/new values, and refreshes current prepared
+snapshots while preserving original evidence and historical review inputs.
+
 ## Two Workflows
 
-This is an independent portfolio project, not an official fund product. A fresh
-clone cannot run the complete workflow by itself: private `benchmark/` inputs,
-portfolio/reference assets, Google OAuth setup, and an authenticated Codex CLI
-are required. No credentials-free sample mode is included. See the repository
+The app starts without private historical inputs. Real collection and publication
+require Google OAuth setup, and model calls require an authenticated Codex CLI.
+Historical `benchmark/` archives and portfolio snapshots are optional; missing
+archives import nothing and missing portfolio data disables exact portfolio
+matching. No credentials-free sample dataset is included. See the repository
 [publication-readiness audit](../docs/publication-readiness.md) before publishing.
 
 1. **Prepare Data**, outside the demo timer: collect the configured Gmail Deals
@@ -62,6 +71,44 @@ are required. No credentials-free sample mode is included. See the repository
    all proposed exclusions and uncertain or corrected rows, apply evidence-backed
    corrections, validate the final package, publish the identical selected set to
    Sheet/Stats/Doc, then read back the values and formatting.
+
+## Corrections
+
+- Remaining Missing Fields counts unresolved cells in current normalized records,
+  not the original preparation report. Open the count to repair a specific field.
+- Edit at the top of the company panel makes its field rows directly editable.
+  Fields are normalized and validated before saving; change notes and source
+  URLs are optional. Save records changes in Correction History; Cancel discards
+  unsaved edits.
+- Review Decision accepts final Yes/No with optional reasoning and an existing
+  evidence item or source URL. First-pass and independent answers are never
+  rewritten; disagreement filters continue using those answers.
+- Each completed review retains its input records and original reviewed baseline.
+  Corrections update a working record, the next prepared snapshot, local metrics,
+  and a traceable correction history. Financing-specific edits are scoped to the
+  record, not automatically propagated to later rounds or other companies.
+- Fit-affecting edits require explicit decision confirmation or Recheck Company.
+  A targeted check uses supplied evidence and preserves explicit human overrides.
+  It does not perform another web search. New source URLs are user-supplied
+  evidence, not automatically verified sources.
+- Refresh Outputs publishes the corrected package without rerunning the full
+  review. Unconfirmed fit changes block refresh. A partial Google failure leaves
+  outputs pending and retryable; original run timing remains unchanged.
+- Source repair rejects tracking/reporting domains as company identity. A dry-run
+  audit can be followed by an applied reconstruction from original extractions:
+
+```sh
+control_center/.venv/bin/python -m control_center.manage repair-sources --week WEEK_ID
+control_center/.venv/bin/python -m control_center.manage repair-sources --week WEEK_ID --apply
+```
+
+Back up the local database before applying a repair. Source repair invalidates the
+old review's preparation version; review the repaired dataset before publishing.
+Original extracted content and past review decisions remain available.
+
+Storage defaults to `control_center/data/`. An alternative local workspace can
+set `DEAL_DATA_DIR`; credentials remain in the normal local secrets directory.
+The default app does not require an additional workspace integration.
 
 Maybe is an internal first-pass routing signal only. The independent checker
 resolves every routed record to a final Yes or No, including reasonable
@@ -182,9 +229,14 @@ Each run freezes one mandate text for both review layers and records its SHA-256
 alongside the prepared-input, review-input, and workflow-code hashes.
 
 Company details expose source excerpts, official-site evidence, missing-field
-reasons, and fit correction memory. Similar sector corrections are retrieved as
-guidance; newer evidence remains authoritative. Saving a correction does not
-silently republish Google outputs: a new review is needed.
+reasons, and fit correction memory. Source Evidence starts collapsed. Edit at the
+top of the company panel enables its field rows and Review Decision in place;
+Save records old/new values in Correction History. Notes and decision sources
+are optional, and an unsourced edit is recorded as a user assertion. Similar
+sector corrections are retrieved as guidance; newer evidence remains
+authoritative. Current-review corrections rebuild the local package; corrections
+after an input refresh are saved for the next review while preserving historical
+results. Saving a correction does not silently republish Google outputs.
 
 ## Timing, Models, And Costs
 
