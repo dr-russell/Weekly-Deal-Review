@@ -66,7 +66,7 @@ class ReviewRestorationTests(unittest.TestCase):
         self.add_run('review-b', 'review', 'completed', '2026-10-02', week='b')
         original = store.get_deals('a')[0]
         for did, company in [('other', 'Other'), ('new', 'New')]:
-            store.execute('INSERT INTO deals(id,week_id,company,entity_key,fields,block_ids,sources,evidence,missing,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)', (did, 'b', company, did, store.encode(original['fields']), '[]', '[]', '[]', '{}', 'new-inputs'))
+            store.execute('INSERT INTO deals(id,week_id,company,entity_key,fields,block_ids,sources,evidence,missing,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)', (did, 'b', company, did, store.encode({**original['fields'], 'website': 'https://' + did + '.example/'}), '[]', '[]', '[]', '{}', 'new-inputs'))
         for rid, did, fit in [('review-a', 'company', 'Yes'), ('review-b', 'other', 'No')]:
             answer = {'fit': fit, 'reason': 'Source-backed decision'}
             store.execute('INSERT INTO decisions(run_id,deal_id,first_pass,final) VALUES(?,?,?,?)', (rid, did, store.encode(answer), store.encode(answer)))

@@ -77,8 +77,10 @@ def latest_review(week_id: str):
 @app.get("/api/deals")
 def deals(week: str = "All", q: str = "", fit: str = "All"):
     if week == "All":
+        from .database import database_matches, dedupe_database
         weeks = store.query("SELECT id FROM weeks ORDER BY end DESC")
-        return sorted((value for item in weeks for value in deals(item["id"], q, fit)), key=lambda value: value["company"].casefold())
+        values = dedupe_database([value for item in weeks for value in deals(item["id"])])
+        return [value for value in values if database_matches(value, q, fit)]
     values = store.get_deals(week)
     from .fx import prepared_rates
     ratebook, _ = prepared_rates(week)
