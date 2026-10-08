@@ -14,7 +14,7 @@ def main():
         try:
             with urllib.request.urlopen(url + "/api/overview", timeout=1) as response:
                 data = json.loads(response.read())
-                if "weeks" in data and "targets" in data:
+                if "weeks" in data and "targets" in data and data.get("workspace", {}).get("allow_preparation", True):
                     print(url)
                     return
         except Exception:

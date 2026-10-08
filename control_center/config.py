@@ -4,14 +4,15 @@ import json
 
 ROOT = Path(__file__).resolve().parent
 PROJECT = ROOT.parent
-DATA = ROOT / "data"
+DATA = Path(os.environ.get("DEAL_DATA_DIR", ROOT / "data")).resolve()
 DB = DATA / "deals.sqlite"
 ARTIFACTS = DATA / "artifacts"
 MANDATE = ROOT / "references/mandate.md"
 NEWSLETTER_CONFIG = ROOT / "references/newsletters.json"
-GOOGLE_TOKEN = DATA / "secrets/google_write_token.json"
-GOOGLE_CLIENT = DATA / "secrets/gmail_credentials.json"
-GMAIL_TOKEN = DATA / "secrets/gmail_token.pickle"
+SECRETS = ROOT / "data" / "secrets"
+GOOGLE_TOKEN = SECRETS / "google_write_token.json"
+GOOGLE_CLIENT = SECRETS / "gmail_credentials.json"
+GMAIL_TOKEN = SECRETS / "gmail_token.pickle"
 MODEL = os.environ.get("DEAL_REVIEW_MODEL", "gpt-6-sol")
 EXTRACT_MODEL = os.environ.get("DEAL_EXTRACT_MODEL", MODEL)
 VERIFY_MODEL = os.environ.get("DEAL_VERIFY_MODEL", MODEL)

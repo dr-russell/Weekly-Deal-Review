@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from rapidfuzz.fuzz import ratio
 
 from .config import FIELDS, TAXONOMY
+from .geography import normalize_geography
 
 
 def normalized_name(value):
@@ -31,6 +32,15 @@ def clean_url(value):
 
 def domain(value):
     return (urlparse(clean_url(value)).hostname or "").removeprefix("www.")
+
+
+def company_domain(value):
+    host = domain(value)
+    tracking = {"click.mail.fortune.com", "link.axios.com", "links.axios.com", "axios.link", "t.co", "bit.ly", "lnkd.in"}
+    reporting = {"techcrunch.com", "fortune.com", "axios.com", "strictlyvc.com", "crunchbase.com", "linkedin.com", "pulse2.com", "prnewswire.com", "businesswire.com", "globenewswire.com", "pitchbook.com", "forbes.com", "sifted.eu", "eu-startups.com", "finsmes.com"}
+    if host in tracking or any(host == site or host.endswith("."+site) for site in reporting) or host.startswith(("click.", "links.")) or host.endswith((".list-manage.com", ".mandrillapp.com", ".sendgrid.net", ".mailchimp.com")):
+        return ""
+    return host
 
 
 def completed_week(today=None):
@@ -258,14 +268,27 @@ def normalize_fields(fields):
     result = {k: str(fields.get(k) or "").strip() for k in FIELDS}
     for key in ["website", "announcement_link"]:
         result[key] = clean_url(result[key])
+    if result["website"] and not company_domain(result["website"]):
+        result["website"] = ""
     result["round"] = normalize_round(result["round"], result["growth_stage"])
+    result["geography"] = normalize_geography(result["geography"])
     return result
+
+
+def remaining_missing_fields(deals):
+    missing = []
+    for deal in deals:
+        fields = normalize_fields(deal["fields"])
+        for key in FIELDS:
+            if not fields[key] or fields[key].casefold() in {"undisclosed", "unknown", "not disclosed", "not available", "usd amount unavailable"}:
+                missing.append({"deal_id": deal["id"], "company": deal["company"], "field": key, "reason": deal.get("missing", {}).get(key) or "No verified value recorded"})
+    return missing
 
 
 def same_financing(a, b):
     af, bf = a["fields"], b["fields"]
     same_name = normalized_name(a["company"]) == normalized_name(b["company"])
-    same_domain = domain(af["website"]) and domain(af["website"]) == domain(bf["website"])
+    same_domain = company_domain(af["website"]) and company_domain(af["website"]) == company_domain(bf["website"])
     if not (same_name or same_domain or ratio(normalized_name(a["company"]), normalized_name(b["company"])) >= 94):
         return False
     ad, bd = date.fromisoformat(af["deal_date"]), date.fromisoformat(bf["deal_date"])
@@ -278,7 +301,8 @@ def same_financing(a, b):
         if value.lower().startswith("strategic"):
             return "strategic"
         return value.casefold()
-    if af["round"] and bf["round"] and round_key(af["round"]) != round_key(bf["round"]):
+    named_rounds = af["round"] not in {"", "Early", "Growth"} and bf["round"] not in {"", "Early", "Growth"}
+    if named_rounds and round_key(af["round"]) != round_key(bf["round"]):
         return False
     am, _ = amount_usd_m(af["amount"])
     bm, _ = amount_usd_m(bf["amount"])
@@ -344,11 +368,11 @@ def merge_deals(mentions):
 
 
 def portfolio_match(deal, portfolio):
-    key, host = normalized_name(deal["company"]), domain(deal["fields"]["website"])
+    key, host = normalized_name(deal["company"]), company_domain(deal["fields"]["website"])
     possible = []
     for item in portfolio:
         name = str(item.get("Name") or "").strip()
-        pkey, phost = normalized_name(name), domain(str(item.get("Company URL") or ""))
+        pkey, phost = normalized_name(name), company_domain(str(item.get("Company URL") or ""))
         if key == pkey or host and host == phost:
             return {"status": "known", "company": name, "method": "domain" if host and host == phost else "normalized_name", "score": 1.0, "url": item.get("Company URL")}
         score = ratio(key, pkey) / 100
@@ -370,6 +394,8 @@ def validate_selected(deals, decisions, start=None, end=None):
             continue
         if decision["fit"] == "No" or decision.get("known_investment"):
             continue
+        if deal.get("portfolio_match", {}).get("status") == "known":
+            issues.append(f"{deal['company']}: selected identity matches an existing investment")
         fields = deal["fields"]
         if start and not start <= fields["deal_date"] <= end:
             continue

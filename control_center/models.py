@@ -38,12 +38,14 @@ ENRICHMENT_SCHEMA = object_schema({"deals": {"type": "array", "items": object_sc
 })}})
 
 
-def run_model(prompt, schema, model, label, research=False, timeout=240):
+def run_model(prompt, schema, model, label, research=False, timeout=240, reasoning_effort="low"):
     folder = ARTIFACTS / label / uuid.uuid4().hex[:10]
     folder.mkdir(parents=True)
     (folder / "prompt.txt").write_text(prompt)
     (folder / "schema.json").write_text(json.dumps(schema))
-    command = [shutil.which("codex") or "codex", "exec", "--ignore-user-config", "--skip-git-repo-check", "--ephemeral", "-s", "read-only", "-C", str(ROOT), "-m", model, "-c", 'model_reasoning_effort="low"', "-c", f'web_search="{"live" if research else "disabled"}"', "--json", "--output-schema", str(folder / "schema.json"), "-o", str(folder / "output.json"), "-"]
+    if reasoning_effort not in {"none", "low", "medium", "high", "xhigh", "max"}:
+        raise ValueError("Unsupported reasoning effort")
+    command = [shutil.which("codex") or "codex", "exec", "--ignore-user-config", "--skip-git-repo-check", "--ephemeral", "-s", "read-only", "-C", str(ROOT), "-m", model, "-c", f'model_reasoning_effort="{reasoning_effort}"', "-c", f'web_search="{"live" if research else "disabled"}"', "--json", "--output-schema", str(folder / "schema.json"), "-o", str(folder / "output.json"), "-"]
     started = time.perf_counter()
     try:
         result = subprocess.run(command, input=prompt, capture_output=True, text=True, timeout=timeout)
@@ -74,7 +76,8 @@ def run_model(prompt, schema, model, label, research=False, timeout=240):
                 forbidden.append(kind)
     if forbidden:
         raise RuntimeError(f"Model used a tool outside its review contract: {forbidden}")
-    metadata = {"model": model, "seconds": round(time.perf_counter() - started, 3), "usage": usage, "web_calls": web_calls, "artifact": str(folder.relative_to(ROOT)), "status": "completed"}
+    artifact = folder.relative_to(ROOT) if folder.is_relative_to(ROOT) else folder
+    metadata = {"model": model, "reasoning_effort": reasoning_effort, "seconds": round(time.perf_counter() - started, 3), "usage": usage, "web_calls": web_calls, "artifact": str(artifact), "status": "completed"}
     (folder / "metadata.json").write_text(json.dumps(metadata))
     return output, metadata
 

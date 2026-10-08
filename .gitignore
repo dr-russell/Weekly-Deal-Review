@@ -32,3 +32,4 @@ control_center/data/
 **/node_modules/
 control_center/web/dist/
 .agents/skills/*
+private_demo/

@@ -11,9 +11,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import store
-from .config import GOOGLE_TOKEN, MODEL, ROOT, TARGETS
+from .config import GOOGLE_TOKEN, MODEL, ROOT, TARGETS, TAXONOMY
 from .google import Publisher
-from .logic import completed_week, normalized_name, normalized_usd_amount, sheet_amount, normalize_round
+from .logic import completed_week, normalized_name, normalized_usd_amount, sheet_amount, normalize_round, remaining_missing_fields
 from .pipeline import import_history, register_week, run_job
 
 JOB_LOCK = threading.Lock()
@@ -29,6 +29,8 @@ async def lifespan(app):
 
 
 app = FastAPI(title="MetaProp Deal Control Center", lifespan=lifespan)
+app.state.workspace = {"name": "Local workspace", "allow_preparation": True, "targets": ["test", "local", "production"], "actions": []}
+app.state.before_job = None
 
 
 @app.middleware("http")
@@ -47,8 +49,10 @@ def overview():
     for w in weeks:
         store.unpack(w, ["report"])
         w["sources"] = store.query("SELECT source,COUNT(DISTINCT message_id) AS emails,COUNT(*) AS source_items FROM blocks WHERE week_id=? GROUP BY source ORDER BY source", (w["id"],))
+        w["remaining_missing_fields"] = remaining_missing_fields(store.get_deals(w["id"]))
+        w["remaining_missing_count"] = len(w["remaining_missing_fields"])
     active = store.query("SELECT id,status,kind,week_id,stage FROM runs WHERE status='running' ORDER BY started_at DESC LIMIT 1")
-    return {"weeks": weeks, "totals": {"deals": store.query("SELECT COUNT(*) AS n FROM deals WHERE active=1")[0]["n"], "emails": store.query("SELECT COUNT(*) AS n FROM messages")[0]["n"], "source_items": store.query("SELECT COUNT(*) AS n FROM blocks")[0]["n"]}, "active_run": active[0] if active else None, "model": MODEL, "targets": TARGETS, "google_authorized": GOOGLE_TOKEN.exists(), "production_enabled": os.environ.get("DEAL_ALLOW_PRODUCTION") == "1"}
+    return {"weeks": weeks, "totals": {"deals": store.query("SELECT COUNT(*) AS n FROM deals WHERE active=1")[0]["n"], "emails": store.query("SELECT COUNT(*) AS n FROM messages")[0]["n"], "source_items": store.query("SELECT COUNT(*) AS n FROM blocks")[0]["n"]}, "active_run": active[0] if active else None, "model": MODEL, "targets": TARGETS, "google_authorized": GOOGLE_TOKEN.exists(), "production_enabled": os.environ.get("DEAL_ALLOW_PRODUCTION") == "1", "workspace": app.state.workspace, "field_options": {"sector": TAXONOMY, "growth_stage": ["Early", "Growth"], "round": ["Pre-seed", "Seed"] + ["Series " + chr(n) for n in range(ord("A"), ord("Z")+1)] + ["Early", "Growth"]}}
 
 
 @app.get("/api/runs")
@@ -64,16 +68,30 @@ def run_detail(run_id: str):
         raise HTTPException(404, "Run not found")
 
 
+@app.get("/api/weeks/{week_id}/latest-review")
+def latest_review(week_id: str):
+    rows = store.query("SELECT id FROM runs WHERE week_id=? AND kind='review' AND status IN ('completed','local_completed') ORDER BY started_at DESC LIMIT 1", (week_id,))
+    return store.get_run(rows[0]['id']) if rows else None
+
+
 @app.get("/api/deals")
-def deals(week: str, q: str = "", fit: str = "All"):
+def deals(week: str = "All", q: str = "", fit: str = "All"):
+    if week == "All":
+        weeks = store.query("SELECT id FROM weeks ORDER BY end DESC")
+        return sorted((value for item in weeks for value in deals(item["id"], q, fit)), key=lambda value: value["company"].casefold())
     values = store.get_deals(week)
     from .fx import prepared_rates
     ratebook, _ = prepared_rates(week)
-    latest = store.query("SELECT id FROM runs WHERE week_id=? AND kind='review' ORDER BY started_at DESC LIMIT 1", (week,))
+    latest = store.query("SELECT id FROM runs WHERE week_id=? AND kind='review' AND status IN ('completed','local_completed') ORDER BY started_at DESC LIMIT 1", (week,))
     decisions = {r["deal_id"]: store.unpack(r, ["first_pass", "verification", "final"]) for r in store.query("SELECT * FROM decisions WHERE run_id=?", (latest[0]["id"],))} if latest else {}
+    from .corrections import user_decision
+    feedback = {r["deal_id"]: r for r in store.query("SELECT f.* FROM feedback f JOIN deals d ON d.id=f.deal_id WHERE d.week_id=? AND f.active=1 ORDER BY f.at", (week,))}
     result = []
     for value in values:
         decision = decisions.get(value["id"])
+        corrected = user_decision(decision["final"] if decision else None, feedback.get(value["id"]))
+        if corrected:
+            decision = {**(decision or {"run_id": None, "first_pass": None, "verification": None}), "final": corrected}
         value["decision"] = decision
         if q.casefold() not in store.encode([value["company"], value["fields"], value["sources"]]).casefold():
             continue
@@ -89,22 +107,42 @@ def deals(week: str, q: str = "", fit: str = "All"):
 
 
 @app.get("/api/deals/{deal_id}")
-def deal_detail(deal_id: str):
+def deal_detail(deal_id: str, run_id: str | None = None):
     rows = store.query("SELECT * FROM deals WHERE id=?", (deal_id,))
     if not rows:
         raise HTTPException(404, "Company not found")
     value = store.unpack(rows[0], ["fields", "block_ids", "sources", "evidence", "missing", "portfolio_match"])
+    if run_id:
+        snapshot = store.query("SELECT record FROM review_records WHERE run_id=? AND deal_id=?", (run_id, deal_id))
+        if snapshot:
+            value.update(json.loads(snapshot[0]["record"]))
     from .pipeline import source_evidence
     value["source_evidence"] = source_evidence(value)
     value["decisions"] = [store.unpack(r, ["first_pass", "verification", "final"]) for r in store.query("SELECT d.*,r.started_at FROM decisions d JOIN runs r ON d.run_id=r.id WHERE deal_id=? ORDER BY r.started_at DESC", (deal_id,))]
     value["feedback"] = store.query("SELECT * FROM feedback WHERE deal_id=? ORDER BY at DESC", (deal_id,))
+    value["field_history"] = store.query("SELECT field,old_value,value,source_url,evidence_id,reason,at,active FROM field_overrides WHERE deal_id=? ORDER BY at DESC", (deal_id,))
+    value["editable_fields"] = dict(value["fields"])
+    week = store.query("SELECT status,updated_at FROM weeks WHERE id=?", (value["week_id"],))[0]
+    latest = store.query("SELECT id,metrics FROM runs WHERE week_id=? AND kind='review' AND status IN ('completed','local_completed') ORDER BY started_at DESC LIMIT 1", (value["week_id"],))
+    value["editable_run_id"] = latest[0]["id"] if latest and json.loads(latest[0]["metrics"]).get("prepared_at") in {None, week["updated_at"]} else None
+    value["editable"] = bool(value.get("active", True) and week["status"] == "prepared" and (not run_id or run_id == value["editable_run_id"]))
+    if run_id:
+        value["decisions"].sort(key=lambda d: d["run_id"] != run_id)
+    elif latest:
+        value["decisions"].sort(key=lambda d: d["run_id"] != latest[0]["id"])
+    value["decision_current"] = bool(value["decisions"] and value["decisions"][0]["run_id"] == value["editable_run_id"])
+    value["pending_recheck"] = bool(latest and value["editable_run_id"] and deal_id in json.loads(latest[0]["metrics"]).get("pending_rechecks", []))
+    from .corrections import user_decision
+    previous = value["decisions"][0] if value["decisions"] else None
+    final = user_decision(previous["final"] if previous else None, next((f for f in value["feedback"] if f["active"]), None)) if not run_id else (previous["final"] if previous else None)
+    value["review_decision"] = {**(previous or {"run_id": None, "first_pass": None, "verification": None}), "final": final} if final else None
+    value["editable_decision"] = value["editable"] and value["portfolio_match"].get("status") != "known" and not (final or {}).get("known_investment")
     from .fx import prepared_rates
     ratebook, _ = prepared_rates(value['week_id'])
     display, _, audit = normalized_usd_amount(value['fields']['amount'], value['fields']['deal_date'], ratebook)
     value['fields']['amount'] = sheet_amount(display)
     value['fields']['round'] = normalize_round(value['fields']['round'], value['fields']['growth_stage'])
     value['amount_normalization'] = audit
-    value['source_evidence'].append({'id':'usd-'+deal_id,'source':'USD conversion audit','text':store.encode(audit)})
     return value
 
 
@@ -117,6 +155,10 @@ class Job(BaseModel):
 
 @app.post("/api/jobs")
 def start_job(job: Job):
+    if job.target not in app.state.workspace["targets"]:
+        raise HTTPException(403, "That publication destination is disabled in this workspace")
+    if job.kind == "prepare" and not app.state.workspace["allow_preparation"]:
+        raise HTTPException(403, "Dataset preparation is disabled in this workspace")
     week = store.query("SELECT * FROM weeks WHERE id=?", (job.week_id,))
     if not week:
         raise HTTPException(404, "Week not found")
@@ -126,9 +168,14 @@ def start_job(job: Job):
         raise HTTPException(409, "Prepare this week before reviewing")
     if not JOB_LOCK.acquire(blocking=False):
         raise HTTPException(409, "Another workflow is running")
+    run_id = None
     try:
         run_id = store.new_run(job.week_id, job.kind, job.target)
-    except Exception:
+        if app.state.before_job:
+            app.state.before_job(job)
+    except Exception as error:
+        if run_id:
+            store.update_run(run_id, status="failed", finished_at=store.now(), error=str(getattr(error, "detail", error)))
         JOB_LOCK.release()
         raise
     def worker():
@@ -152,22 +199,98 @@ def new_week(week: Week):
     return {"week_id": register_week(week.start, week.end)}
 
 
-class Feedback(BaseModel):
-    deal_id: str
+class DecisionCorrection(BaseModel):
     fit: Literal["Yes", "No"]
-    reason: str = Field(min_length=5, max_length=3000)
+    reason: str = Field(default="", max_length=3000)
+    source_url: str = Field(default="", max_length=2000)
+    evidence_id: str = ""
+    expected_final: dict
 
 
-@app.post("/api/feedback")
-def feedback(item: Feedback):
-    import uuid
-    if not store.query("SELECT id FROM deals WHERE id=?", (item.deal_id,)):
-        raise HTTPException(404, "Company not found")
-    previous = store.query("SELECT final FROM decisions WHERE deal_id=? ORDER BY rowid DESC LIMIT 1", (item.deal_id,))
-    fid = uuid.uuid4().hex[:16]
-    store.execute("UPDATE feedback SET active=0 WHERE deal_id=?", (item.deal_id,))
-    store.execute("INSERT INTO feedback(id,deal_id,fit,reason,previous,at) VALUES(?,?,?,?,?,?)", (fid, item.deal_id, item.fit, item.reason, previous[0]["final"] if previous else None, store.now()))
-    return {"id": fid, "saved": True}
+class FieldCorrection(BaseModel):
+    changes: dict[str, str]
+    reason: str = Field(default="", max_length=3000)
+    source_url: str = ""
+    evidence_id: str = ""
+    expected_fields: dict[str, str]
+    run_id: str | None = None
+
+
+class RecordDecisionCorrection(DecisionCorrection):
+    expected_final: dict | None = None
+    expected_fields: dict[str, str]
+
+
+@app.post("/api/deals/{deal_id}/decision")
+def record_decision_correction(deal_id: str, item: RecordDecisionCorrection):
+    from .corrections import CorrectionError, correct_record_decision
+    if not JOB_LOCK.acquire(blocking=False):
+        raise HTTPException(409, "Another workflow is running")
+    try:
+        return correct_record_decision(deal_id, item.fit, item.reason, item.source_url, item.evidence_id, item.expected_final, item.expected_fields)
+    except CorrectionError as error:
+        raise HTTPException(error.status, str(error))
+    finally:
+        JOB_LOCK.release()
+
+
+@app.post("/api/deals/{deal_id}/correction")
+def field_correction(deal_id: str, item: FieldCorrection):
+    from .corrections import CorrectionError, correct_fields
+    if not JOB_LOCK.acquire(blocking=False):
+        raise HTTPException(409, "Another workflow is running")
+    try:
+        return correct_fields(deal_id, item.changes, item.reason, item.source_url, item.evidence_id, item.expected_fields, item.run_id)
+    except CorrectionError as error:
+        raise HTTPException(error.status, str(error))
+    finally:
+        JOB_LOCK.release()
+
+
+@app.post("/api/runs/{run_id}/recheck/{deal_id}")
+def recheck(run_id: str, deal_id: str):
+    from .corrections import CorrectionError, recheck_company
+    if not JOB_LOCK.acquire(blocking=False):
+        raise HTTPException(409, "Another workflow is running")
+    try:
+        return recheck_company(run_id, deal_id)
+    except CorrectionError as error:
+        raise HTTPException(error.status, str(error))
+    except Exception as error:
+        raise HTTPException(502, str(error))
+    finally:
+        JOB_LOCK.release()
+
+
+@app.post("/api/runs/{run_id}/decisions/{deal_id}/correction")
+def decision_correction(run_id: str, deal_id: str, item: DecisionCorrection):
+    from .corrections import CorrectionError, correct_decision
+    if not JOB_LOCK.acquire(blocking=False):
+        raise HTTPException(409, "Another workflow is running")
+    try:
+        return correct_decision(run_id, deal_id, item.fit, item.reason, item.expected_final, item.source_url, item.evidence_id)
+    except CorrectionError as error:
+        raise HTTPException(error.status, str(error))
+    finally:
+        JOB_LOCK.release()
+
+
+@app.post("/api/runs/{run_id}/publish-corrections")
+def refresh_corrected_outputs(run_id: str):
+    from .corrections import CorrectionError, publish_corrections
+    rows = store.query("SELECT target FROM runs WHERE id=?", (run_id,))
+    if rows and rows[0]["target"] == "production" and os.environ.get("DEAL_ALLOW_PRODUCTION") != "1":
+        raise HTTPException(403, "Production is disabled")
+    if not JOB_LOCK.acquire(blocking=False):
+        raise HTTPException(409, "Another workflow is running")
+    try:
+        return publish_corrections(run_id)
+    except CorrectionError as error:
+        raise HTTPException(error.status, str(error))
+    except Exception as error:
+        raise HTTPException(502, str(error))
+    finally:
+        JOB_LOCK.release()
 
 
 @app.get("/api/health/google")
@@ -187,7 +310,9 @@ def evaluation():
     gold = []
     for filename in ["tri_state_diagnostic.json", "agreement_sample.json"]:
         from .config import PROJECT
-        gold.extend(json.loads((PROJECT / "benchmark" / filename).read_text())["cases"])
+        path = PROJECT / "benchmark" / filename
+        if path.exists():
+            gold.extend(json.loads(path.read_text())["cases"])
     weeks = store.query("SELECT * FROM weeks ORDER BY start")
     results, counts = [], {"labeled": len(gold), "scored": 0, "missing": 0, "extraction_missing": 0, "first_correct": 0, "final_correct": 0, "tp": 0, "fn": 0, "fp": 0, "tn": 0}
     for case in gold:
@@ -206,7 +331,8 @@ def evaluation():
             counts["fn" if case["fit"] != "No" else "tn"] += 1
             results.append({**case, "status": "extraction_missing", "correct": False, "run_id": run[0]["id"], "reason_unscored": "Company absent from the completed run; relevant missing companies count as recall failures"})
             continue
-        first, final = json.loads(predicted["first_pass"]), json.loads(predicted["final"])
+        first, saved_final = json.loads(predicted["first_pass"]), json.loads(predicted["final"])
+        final = saved_final.get("original_model_final", saved_final.get("manual_override", {}).get("model_final", saved_final))
         counts["scored"] += 1
         expected_final = "No" if case["fit"] == "No" else "Yes"
         binary_policy = json.loads(run[0]["package"] or "{}").get("policy", "").startswith("Final binary")

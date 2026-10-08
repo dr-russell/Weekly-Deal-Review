@@ -85,12 +85,29 @@ def initialize():
             at TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1
         );
         CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS review_records (
+            run_id TEXT NOT NULL REFERENCES runs(id), deal_id TEXT NOT NULL REFERENCES deals(id),
+            record TEXT NOT NULL, PRIMARY KEY(run_id,deal_id)
+        );
+        CREATE TABLE IF NOT EXISTS review_baselines (
+            run_id TEXT PRIMARY KEY REFERENCES runs(id), payload TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS field_overrides (
+            id TEXT PRIMARY KEY, deal_id TEXT NOT NULL REFERENCES deals(id),
+            field TEXT NOT NULL, old_value TEXT NOT NULL, value TEXT NOT NULL,
+            source_url TEXT NOT NULL, evidence_id TEXT NOT NULL, reason TEXT NOT NULL,
+            at TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1
+        );
         """)
         columns = {r[1] for r in db.execute("PRAGMA table_info(runs)")}
         if "owner_pid" not in columns:
             db.execute("ALTER TABLE runs ADD COLUMN owner_pid INTEGER NOT NULL DEFAULT 0")
         if "active" not in {r[1] for r in db.execute("PRAGMA table_info(deals)")}:
             db.execute("ALTER TABLE deals ADD COLUMN active INTEGER NOT NULL DEFAULT 1")
+        feedback_columns = {r[1] for r in db.execute("PRAGMA table_info(feedback)")}
+        for column in ("source_url", "evidence_id"):
+            if column not in feedback_columns:
+                db.execute(f"ALTER TABLE feedback ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
         for run in db.execute("SELECT id,owner_pid FROM runs WHERE status='running'").fetchall():
             try:
                 if not run["owner_pid"]:
