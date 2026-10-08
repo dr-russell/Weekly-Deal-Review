@@ -110,6 +110,20 @@ Storage defaults to `control_center/data/`. An alternative local workspace can
 set `DEAL_DATA_DIR`; credentials remain in the normal local secrets directory.
 The default app does not require an additional workspace integration.
 
+Run History opens a separate read-only Run Details view. Results, audit events,
+timings, saved rows, and company snapshots belong to the selected run. Original
+reviewed baselines take precedence over later edits; later correction events are
+shown separately. Missing historical company snapshots never fall back to the
+current dataset. View Current Week returns to the editable workspace. Google
+links are labeled Live outputs because later publications can change those files.
+
+To preview a history reset, run
+`control_center/.venv/bin/python -m control_center.manage clear-history`.
+Add `--apply` to back up the database and remove run-owned history records;
+prepared deals, source inputs, field corrections, and feedback are preserved.
+An active workflow blocks the reset. Optional `--week WEEK_ID` limits the reset
+to that week. Local snapshot and artifact files remain available on disk.
+
 Maybe is an internal first-pass routing signal only. The independent checker
 resolves every routed record to a final Yes or No, including reasonable
 evidence-backed borderlines when justified. Only final Yes rows are published;

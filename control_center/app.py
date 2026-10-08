@@ -57,7 +57,7 @@ def overview():
 
 @app.get("/api/runs")
 def runs():
-    return [store.unpack(r, ["metrics", "timings"]) for r in store.query("SELECT id,week_id,kind,target,status,stage,started_at,finished_at,elapsed,timings,metrics,error FROM runs ORDER BY started_at DESC LIMIT 100")]
+    return [store.unpack(r, ["metrics", "timings"]) for r in store.query("SELECT r.id,r.week_id,r.kind,r.target,r.status,r.stage,r.started_at,r.finished_at,r.elapsed,r.timings,r.metrics,r.error,(SELECT json_extract(b.payload,'$.metrics.count') FROM review_baselines b WHERE b.run_id=r.id) AS historical_selected_count FROM runs r ORDER BY r.started_at DESC LIMIT 100")]
 
 
 @app.get("/api/runs/{run_id}")
@@ -66,6 +66,26 @@ def run_detail(run_id: str):
         return store.get_run(run_id)
     except KeyError:
         raise HTTPException(404, "Run not found")
+
+
+@app.get("/api/runs/{run_id}/history")
+def run_history_detail(run_id: str):
+    from .history import historical_run
+    try:
+        result = historical_run(run_id)
+        result.pop("snapshot_records")
+        return result
+    except KeyError:
+        raise HTTPException(404, "Run not found")
+
+
+@app.get("/api/runs/{run_id}/deals/{deal_id}")
+def run_company_detail(run_id: str, deal_id: str):
+    from .history import historical_deal
+    try:
+        return historical_deal(run_id, deal_id)
+    except KeyError as error:
+        raise HTTPException(404, str(error).strip("'"))
 
 
 @app.get("/api/weeks/{week_id}/latest-review")
