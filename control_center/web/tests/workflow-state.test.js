@@ -1,9 +1,65 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {decisionMatchesFilter, resultMessage, runSectionExpanded, selectedRunWeek, sourceStatus, stageDuration} from '../src/workflow-state.js';
+import {canEditReview, datasetCounts, decisionMatchesFilter, evidenceGroups, preparationForWeek, resultMessage, runForWeek, runSectionExpanded, runsForWeek, selectedRunWeek, sourceStatus, stageDuration} from '../src/workflow-state.js';
 
-test('the selected week follows an active background workflow', () => {
-  assert.equal(selectedRunWeek({active_run:{week_id:'older-week'},weeks:[{id:'latest',status:'prepared'},{id:'older-week',status:'raw'}]}, 'latest'), 'older-week');
+test('evidence groups repeated pages and preserves every citation identifier', () => {
+  const sources=[{id:'first',url:'https://example.com/news',quote:'A funding round'},{id:'second',url:'https://example.com/news/',quote:'A funding round'},{id:'third',url:'https://example.com/news#details',quote:'Another supporting excerpt'}];
+  const groups=evidenceGroups(sources);
+  assert.equal(groups.length,1);
+  assert.deepEqual(groups[0].ids,['first','second','third']);
+  assert.equal(groups[0].items.length,2);
+  assert.equal(sources[0].ids,undefined);
+});
+
+test('newsletter grouping distinguishes different emails on the same date', () => {
+  const groups=evidenceGroups([{id:'a',source:'Newsletter',message_id:'one',date:'today',text:'Deal excerpt'},{id:'b',source:'Newsletter',message_id:'one',date:'today',text:'Extra deal excerpt'},{id:'c',source:'Newsletter',message_id:'two',date:'today',text:'Different edition'}]);
+  assert.equal(groups.length,2);
+  assert.deepEqual(groups[0].ids,['a','b']);
+});
+
+test('only the latest completed review for current prepared inputs is editable', () => {
+  const week={id:'week',updated_at:'current'};
+  const run={id:'review',kind:'review',week_id:'week',status:'completed',metrics:{prepared_at:'current'}};
+  assert.equal(canEditReview(null,[],week),false);
+  assert.equal(canEditReview(run,[],week),false);
+  assert.equal(canEditReview(run,[run],week),true);
+  assert.equal(canEditReview({...run,status:'running'},[run],week),false);
+  assert.equal(canEditReview(run,[{...run,id:'newer'},run],week),false);
+  assert.equal(canEditReview(run,[run],{...week,updated_at:'new-inputs'}),false);
+});
+
+test('history filters by the selected week without changing run order or records', () => {
+  const runs=[{id:'new',week_id:'week-a',status:'failed'},{id:'other',week_id:'week-b'},{id:'old',kind:'review',week_id:'week-a',status:'completed'}];
+  const before=JSON.stringify(runs);
+  assert.deepEqual(runsForWeek(runs,'week-a').map(run=>run.id),['new','old']);
+  assert.deepEqual(runsForWeek(runs,'week-b').map(run=>run.id),['other']);
+  assert.deepEqual(runsForWeek(runs,'week-c'),[]);
+  assert.deepEqual(runsForWeek([], 'week-a'),[]);
+  assert.equal(JSON.stringify(runs),before);
+});
+
+test('a fresh view follows an active background workflow without overriding week navigation', () => {
+  const overview={active_run:{week_id:'older-week'},weeks:[{id:'latest',status:'prepared'},{id:'older-week',status:'raw'}]};
+  assert.equal(selectedRunWeek(overview, ''), 'older-week');
+  assert.equal(selectedRunWeek(overview, 'latest'), 'latest');
+});
+
+test('background progress stays associated with its week while browsing other weeks', () => {
+  const background={id:'active',kind:'review',week_id:'week-a',status:'running'};
+  const historical={id:'old',kind:'review',week_id:'week-b',status:'completed'};
+  assert.equal(runForWeek(null,background,'week-a'),background);
+  assert.equal(runForWeek(null,background,'week-b'),null);
+  assert.equal(runForWeek(historical,background,'week-b'),historical);
+  assert.equal(runForWeek(historical,background,'week-a'),background);
+  assert.equal(background.status,'running');
+});
+
+test('finished background results remain available without replacing an opened historical run', () => {
+  const background={id:'finished',kind:'review',week_id:'week-a',status:'completed'};
+  const historical={id:'old',kind:'review',week_id:'week-a',status:'completed'};
+  assert.equal(runForWeek(null,background,'week-a'),background);
+  assert.equal(runForWeek(historical,background,'week-a'),historical);
+  assert.equal(runForWeek(null,null,'week-a'),null);
 });
 
 test('an idle view preserves a valid selected week', () => {
@@ -22,6 +78,11 @@ test('preparation never claims Google publication', () => {
   }
   assert.equal(resultMessage({kind:'review',status:'completed'}), 'Published and confirmed');
   assert.equal(resultMessage({kind:'review',status:'local_completed'}), 'Local review finished; no Google writes');
+});
+
+test('saved corrections never claim that stale outputs have been updated', () => {
+  assert.equal(resultMessage({kind:'review',status:'completed',metrics:{outputs_dirty:true}}),'Corrections saved; outputs need refresh');
+  assert.equal(resultMessage({kind:'review',status:'local_completed',metrics:{manual_corrections:1}}),'Local review corrected; no Google writes');
 });
 
 test('failed and interrupted runs retain the recorded failure', () => {
@@ -93,4 +154,41 @@ test('decisions stay collapsed by default independently of audit', () => {
   for (const status of ['running','completed','failed']) assert.equal(runSectionExpanded({status},'decisions'),false);
   assert.equal(runSectionExpanded(null,'decisions'),false);
   assert.equal(runSectionExpanded({status:'running'},'audit'),true);
+});
+
+
+test('preparation cannot replace a saved week review or become a review result', () => {
+  const saved={id:'saved',kind:'review',week_id:'a',status:'completed',decisions:[{id:'decision'}],events:[{id:'audit'}]};
+  for(const status of ['running','completed','failed']){
+    const preparation={id:'prep',kind:'prepare',week_id:'a',status};
+    assert.equal(runForWeek(null,preparation,'a',saved),saved);
+    assert.equal(runForWeek(preparation,preparation,'a',saved),saved);
+    assert.equal(runForWeek(null,preparation,'b',saved),null);
+    assert.equal(runForWeek(null,preparation,'a',null),null);
+  }
+});
+
+test('active reviews show progress while week switches retain the applicable saved review', () => {
+  const active={id:'new',kind:'review',week_id:'a',status:'running'};
+  const savedA={id:'old-a',kind:'review',week_id:'a',status:'completed'};
+  const savedB={id:'old-b',kind:'review',week_id:'b',status:'local_completed'};
+  assert.equal(runForWeek(null,active,'a',savedA),active);
+  assert.equal(runForWeek(null,active,'b',savedB),savedB);
+  assert.equal(runForWeek(null,active,'b',savedA),null);
+  assert.equal(runForWeek(savedA,active,'a',savedA),savedA);
+});
+
+test('both final dataset counts remain masked through preparation and overview readback', () => {
+  const old={id:'a',status:'prepared',report:{duplicate_mentions:10},remaining_missing_count:5};
+  const running={id:'prep',kind:'prepare',week_id:'a',status:'running'};
+  assert.equal(preparationForWeek(running,null,'a'),true);
+  assert.equal(preparationForWeek(running,null,'b'),false);
+  assert.equal(preparationForWeek({...running,kind:'review'},null,'a'),false);
+  assert.deepEqual(datasetCounts(old,true),{duplicates:'Preparing',missing:'Preparing',available:false});
+  const complete={...running,status:'completed'};
+  assert.equal(preparationForWeek(complete,{week_id:'a',run_id:'prep'},'a'),true);
+  assert.deepEqual(datasetCounts(old,preparationForWeek(complete,{week_id:'a'},'a')),{duplicates:'Preparing',missing:'Preparing',available:false});
+  const fresh={...old,report:{duplicate_mentions:17},remaining_missing_count:0};
+  assert.deepEqual(datasetCounts(fresh,preparationForWeek(complete,null,'a')),{duplicates:17,missing:0,available:true});
+  assert.deepEqual(datasetCounts({...fresh,status:'raw'},false),{duplicates:'--',missing:'--',available:false});
 });
