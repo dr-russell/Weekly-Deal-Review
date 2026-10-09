@@ -1,6 +1,7 @@
 from pathlib import Path
 import os
 import json
+from .sectors import SECTORS
 
 ROOT = Path(__file__).resolve().parent
 PROJECT = ROOT.parent
@@ -46,5 +47,5 @@ GOOGLE_ACCOUNT = _GOOGLE_SETTINGS['account']
 IDENTITY_SCOPES = ["openid", "https://www.googleapis.com/auth/userinfo.email"]
 TARGETS = _GOOGLE_SETTINGS['targets']
 HEADERS = ["Current Week?", "Growth or Early", "Deal Date", "Company", "Website", "Round", "Amount Raised", "Investors", "Sector", "Description", "Geography", "Source", "Announcement Link", "Fit?"]
-TAXONOMY = ["PropTech", "Construction Tech", "Built World Software", "Real Estate Fintech", "Climate / Building Efficiency", "Smart Buildings", "Infrastructure / Facilities", "AEC Software", "Home Services", "Insurance / Risk for Real Estate", "Logistics / Industrial Real Estate", "Adjacent Built World", "Outside Mandate"]
+TAXONOMY = list(SECTORS.values())
 FIELDS = ["growth_stage", "deal_date", "website", "round", "amount", "investors", "sector", "description", "geography", "announcement_link"]

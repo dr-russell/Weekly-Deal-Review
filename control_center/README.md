@@ -74,6 +74,14 @@ matching. No credentials-free sample dataset is included. See the repository
 
 ## Corrections
 
+Sector uses the 20 StartHere industry labels, with one primary sector per deal.
+Specific customer industries take precedence over generic technology labels when
+equally supported. Sector describes the business; evidence-based mandate Fit is
+separate. The taxonomy version is recorded in preparation and review provenance.
+Current records and prepared snapshots use the new labels; historical review
+records and decisions retain their original values. Sector migration creates a
+database backup and records each old/new value and its classification basis.
+
 The checkbox week selector is used in Control Center, Run History, and Deal
 Database. Click anywhere on a week row to toggle it. The selector shows a date
 range for one week or a selected count for multiple weeks. Choose multiple weeks

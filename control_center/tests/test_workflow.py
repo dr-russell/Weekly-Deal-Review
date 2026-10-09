@@ -15,7 +15,7 @@ from control_center.models import compact_review_payload, reconcile_ids, restore
 
 
 def deal(name="Example", amount="$10 million", day="2026-09-18", round="Series A", website="https://example.com/"):
-    return {"id": name, "company": name, "fields": {"growth_stage": "Early", "deal_date": day, "website": website, "round": round, "amount": amount, "investors": "Alpha, Beta", "sector": "Construction Tech", "description": "Construction estimating software", "geography": "New York, NY", "announcement_link": "https://example.com/news/funding"}, "block_ids": [name], "sources": ["Term Sheet"], "evidence": [], "missing": {}}
+    return {"id": name, "company": name, "fields": {"growth_stage": "Early", "deal_date": day, "website": website, "round": round, "amount": amount, "investors": "Alpha, Beta", "sector": "Construction & Proptech", "description": "Construction estimating software", "geography": "New York, NY", "announcement_link": "https://example.com/news/funding"}, "block_ids": [name], "sources": ["Term Sheet"], "evidence": [], "missing": {}}
 
 
 def decision(fit="Yes", confidence=.95):

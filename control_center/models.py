@@ -7,7 +7,7 @@ import uuid
 
 from jsonschema import validate, ValidationError
 
-from .config import ARTIFACTS, ROOT
+from .config import ARTIFACTS, ROOT, TAXONOMY
 
 
 def object_schema(properties):
@@ -36,6 +36,8 @@ ENRICHMENT_SCHEMA = object_schema({"deals": {"type": "array", "items": object_sc
     "evidence": {"type": "array", "items": object_schema({"url": STRING, "quote": STRING, "summary": STRING, "fields": STRINGS})},
     "missing": object_schema({key: STRING for key in ["growth_stage", "deal_date", "website", "round", "amount", "investors", "sector", "description", "geography", "announcement_link"]}),
 })}})
+EXTRACTION_SCHEMA["properties"]["records"]["items"]["properties"]["deals"]["items"]["properties"]["fields"]["properties"]["sector"] = {"type": "string", "enum": ["", *TAXONOMY]}
+ENRICHMENT_SCHEMA["properties"]["deals"]["items"]["properties"]["fields"]["properties"]["sector"] = {"type": "string", "enum": ["", *TAXONOMY]}
 
 
 class ModelOutputError(ValueError):

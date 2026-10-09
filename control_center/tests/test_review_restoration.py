@@ -17,7 +17,7 @@ class ReviewRestorationTests(unittest.TestCase):
         store.initialize()
         for week in ['a', 'b']:
             store.execute('INSERT INTO weeks(id,start,end,label,status,updated_at) VALUES(?,?,?,?,?,?)', (week, '2026-09-16', '2026-09-22', week, 'prepared', 'new-inputs'))
-        fields = {'growth_stage':'Early','deal_date':'2026-09-18','website':'https://example.com/','round':'Series A','amount':'$10 million','investors':'Alpha','sector':'Construction Tech','description':'Contractor software','geography':'New York City, New York, USA','announcement_link':'https://example.com/news'}
+        fields = {'growth_stage':'Early','deal_date':'2026-09-18','website':'https://example.com/','round':'Series A','amount':'$10 million','investors':'Alpha','sector':'Construction & Proptech','description':'Contractor software','geography':'New York City, New York, USA','announcement_link':'https://example.com/news'}
         store.execute('INSERT INTO deals(id,week_id,company,entity_key,fields,block_ids,sources,evidence,missing,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)', ('company', 'a', 'Example', 'example', store.encode(fields), '[]', '[]', '[]', '{}', 'new-inputs'))
 
     def tearDown(self):

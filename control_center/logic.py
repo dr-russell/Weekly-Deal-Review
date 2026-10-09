@@ -9,6 +9,7 @@ from rapidfuzz.fuzz import ratio
 
 from .config import FIELDS, TAXONOMY
 from .geography import normalize_geography
+from .sectors import normalize_sector
 
 
 def normalized_name(value):
@@ -289,6 +290,7 @@ def specific_round_amount(amount, round):
 
 def normalize_fields(fields):
     result = {k: str(fields.get(k) or "").strip() for k in FIELDS}
+    result["sector"] = normalize_sector(result["sector"])
     for key in ["website", "announcement_link"]:
         result[key] = clean_url(result[key])
     if result["website"] and not company_domain(result["website"]):

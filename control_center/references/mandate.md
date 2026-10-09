@@ -20,6 +20,7 @@ Classify `Fit? = Yes` when the company is clearly in one of these:
 - Built World Software
 - Real Estate Technology
 - Property Management Software
+- Hospitality PropTech: hotel room inventory, distribution, pricing, reservations, and property-system operating workflows
 - Facilities Management
 - Smart Buildings
 - AEC Software
@@ -31,6 +32,8 @@ Classify `Fit? = Yes` when the company is clearly in one of these:
 - Insurance / risk for real estate or built assets
 - Logistics / industrial real estate software
 
+Energy relevance must be tied to building efficiency, energy management for buildings, or a specific property operating workflow. Primary energy-generation providers and generation technology, including fusion, are outside scope. A utility-scale power plant, an infrastructure label, or supplying electricity to buildings or data centers does not establish mandate fit. Physical infrastructure alone is not a qualifying built-world use case. Apply explicit exclusions before the borderline inclusion policy; adjacency cannot override an exclusion.
+
 Use provisional `Fit? = Maybe` internally when:
 
 - The sector is built-world adjacent but not clearly core.
@@ -41,6 +44,7 @@ Independent verification must resolve these to final Yes or No before publicatio
 
 Classify `Fit? = No` when clearly outside mandate:
 
+- Fusion and other primary energy-generation providers or generation technology
 - Biotech
 - Consumer social
 - Gaming
@@ -48,7 +52,9 @@ Classify `Fit? = No` when clearly outside mandate:
 - Pure e-commerce
 - Non-built-world healthcare
 - International-only outside US/Canada
-- Generic horizontal software with no plausible built-world relevance
+- Generic cybersecurity, penetration testing, attack-surface management, or offensive cyber operations without a specific documented built-world operating workflow. Government, industrial, or critical-infrastructure customers alone do not turn digital security into a physical-asset or property workflow.
+- Defense/weapons products without a specific documented built-world operating workflow.
+- Generic horizontal software with no evidenced built-world relevance
 
 Append only final Yes deals. The completed sheet must have no Maybe rows.
 
@@ -62,18 +68,25 @@ Append only final Yes deals. The completed sheet must have no Maybe rows.
 
 ## Sector Taxonomy
 
-Use one of these sector labels when possible:
+Use one primary StartHere industry label for the company’s actual business. Sector is independent of Fit; determine mandate relevance from the product, customers, geography, and evidence using the criteria above.
 
-- PropTech
-- Construction Tech
-- Built World Software
-- Real Estate Fintech
-- Climate / Building Efficiency
-- Smart Buildings
-- Infrastructure / Facilities
-- AEC Software
-- Home Services
-- Insurance / Risk for Real Estate
-- Logistics / Industrial Real Estate
-- Adjacent Built World
-- Outside Mandate
+- AI Applications
+- AI Infrastructure
+- Data & Analytics
+- Developer Tools
+- Cloud & Infrastructure
+- Cybersecurity
+- Robotics & Automation
+- Fintech
+- Healthtech & Life Sciences
+- Climate & Energy
+- Industrial & Manufacturing
+- Construction & Proptech
+- Commerce & Marketplaces
+- Consumer
+- Education
+- Media & Gaming
+- Transportation & Logistics
+- Aerospace, Defense & Public Safety
+- B2B SaaS
+- Crypto & Blockchain
