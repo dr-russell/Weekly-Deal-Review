@@ -42,6 +42,8 @@ Use provisional `Fit? = Maybe` internally when:
 
 Independent verification must resolve these to final Yes or No before publication. A specific source-backed built-world product, customer, or use case can justify a borderline Yes; a merely hypothetical application cannot. Record uncertainty in the audit reason rather than leaving Maybe in the completed sheet.
 
+Apply this inclusion policy equally in both independent reviews and adjudication. A named deployment or a product specialized exclusively for a vertical is not required when a specific relevant product, customer, or use case is documented. Agreement does not settle cases with unsupported decisive facts or a concrete unresolved mandate criterion; adjudicate those cases and research concrete missing facts when necessary. A supported borderline Yes allowed by this policy is not automatically an unresolved mandate boundary. Routine field accuracy and correction are handled during data processing, not fit adjudication.
+
 Classify `Fit? = No` when clearly outside mandate:
 
 - Fusion and other primary energy-generation providers or generation technology

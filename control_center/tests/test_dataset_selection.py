@@ -123,8 +123,10 @@ class DatasetSelectionTests(unittest.TestCase):
         def review(payload,*args,**kwargs):
             self.assertEqual({row["id"] for row in payload},{"example","different"})
             values={row["id"]:{**self.fixture.final,"id":row["id"],"field_corrections":[]} for row in payload}
-            return values,{},[],0,{"review":1,"verification":0}
-        with patch.object(pipeline,"review_batches",side_effect=review),patch("control_center.google.Publisher") as publisher,patch("control_center.google.linked_charts",return_value={}):
+            for value in values.values():
+                value["review_resolution"]={"version":"compact-dual-adjudicator-v1","disagreed":False,"result":"supported_agreement"}
+            return values,copy.deepcopy(values),copy.deepcopy(values),[],{"decision_workflow":"compact-dual-adjudicator-v1"},{"dual_review":1},{}
+        with patch("control_center.mandate_flow.run_flow",side_effect=review),patch("control_center.google.Publisher") as publisher,patch("control_center.google.linked_charts",return_value={}):
             publisher.return_value.publish.return_value={"written_rows":2}
             pipeline.review_and_publish(run,self.first,"test",[self.first,third])
             package=publisher.return_value.publish.call_args.args[0]

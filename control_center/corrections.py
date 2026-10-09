@@ -5,7 +5,7 @@ import uuid
 from . import store
 from .config import FIELDS, TAXONOMY, PROJECT
 from .google import Publisher
-from .logic import clean_url, MONEY_OCCURRENCE, make_package, normalize_fields, portfolio_match, remaining_missing_fields, validate_selected
+from .logic import clean_url, MONEY_OCCURRENCE, make_package, normalize_fields, portfolio_match, publication_records, remaining_missing_fields, validate_selected
 
 FIT_FIELDS = {"website", "geography", "sector", "description", "growth_stage", "round", "announcement_link"}
 
@@ -32,7 +32,8 @@ def run_records(db, run):
 def rebuild_package(run, week, deals, decisions):
     if {deal["id"] for deal in deals} != set(decisions):
         raise CorrectionError("Deal records changed since this review; review the updated week first")
-    errors = validate_selected(deals, decisions, week["start"], week["end"])
+    output_deals, merged_coverage = publication_records(deals, decisions)
+    errors = validate_selected(output_deals, decisions, week["start"], week["end"])
     if errors:
         raise CorrectionError("Selected-row validation failed: " + "; ".join(errors), 422)
     package = make_package(deals, decisions, week["start"], week["end"], run["package"].get("fx_rates", {}))
@@ -42,10 +43,11 @@ def rebuild_package(run, week, deals, decisions):
             raise CorrectionError("Financing date falls outside the selected weeks", 422)
         from .dataset import add_selection_package
         add_selection_package(package, deals, decisions, periods)
-    selected = [d for d in deals if decisions[d["id"]]["fit"] == "Yes" and not decisions[d["id"]].get("known_investment") and week["start"] <= d["fields"]["deal_date"] <= week["end"]]
+    selected = [d for d in output_deals if decisions[d["id"]]["fit"] == "Yes" and not decisions[d["id"]].get("known_investment") and week["start"] <= d["fields"]["deal_date"] <= week["end"]]
     changed_outputs = package["rows"] != run["package"]["rows"] or any(package["stats"][key] != run["package"]["stats"][key] for key in ["count", "capital_usd_m"])
     metrics = {**run["metrics"], **package["stats"], "excluded": sum(d["fit"] == "No" and not d.get("known_investment") for d in decisions.values()), "known_investments": sum(bool(d.get("known_investment")) for d in decisions.values()), "manual_corrections": sum(bool(d.get("manual_override")) for d in decisions.values()), "outputs_dirty": run["target"] != "local" and (run["metrics"].get("outputs_dirty", False) or changed_outputs)}
     metrics["row_completeness"] = {"selected_rows": len(selected), "fields_per_row": len(FIELDS), "populated_fields": sum(bool(d["fields"][k]) for d in selected for k in FIELDS), "documented_unavailable": remaining_missing_fields(selected), "unexplained_blanks": 0}
+    metrics["merged_selected_coverage"] = merged_coverage
     return package, metrics
 
 
@@ -311,6 +313,13 @@ def recheck_company(run_id, deal_id):
     if candidate["portfolio_match"].get("status") == "known":
         result = {**previous, "fit": "No", "known_investment": True, "reason": "Corrected identity matches an existing portfolio investment", "field_corrections": []}
         usage = {"model_calls": 0}
+    elif run["metrics"].get("decision_workflow"):
+        from .mandate_flow import run_flow
+        from .config import MANDATE
+        a, b, resolved, jobs, _, timings, evidence = run_flow(review_inputs([candidate]), run_id, MANDATE.read_text(), record_progress=False, artifact_label=f"{run_id}/rechecks/{uuid.uuid4().hex[:16]}")
+        result = resolved[deal_id]
+        candidate["evidence"].extend(evidence.get(deal_id, []))
+        usage = {"jobs": jobs, "timings": timings, "reviewer_a": a[deal_id], "reviewer_b": b[deal_id]}
     else:
         result_list, usage = classify_batch(review_inputs([candidate]), f"{run_id}/rechecks/{uuid.uuid4().hex[:16]}", independent=True)
         result = result_list[0]
@@ -319,6 +328,8 @@ def recheck_company(run_id, deal_id):
         candidate["evidence"].append({**correction, "id": "recheck-note-" + uuid.uuid4().hex[:16], "kind": "recheck_finding", "at": store.now()})
     original = previous.get("original_model_final", previous.get("manual_override", {}).get("model_final", previous))
     final = {**result, "original_model_final": original}
+    if previous.get("review_resolution"):
+        final.update(review_resolution=previous["review_resolution"], latest_recheck=result)
     if previous.get("manual_override") and not result.get("known_investment"):
         final = {**previous, "latest_recheck": result}
     decisions[deal_id] = final
@@ -329,6 +340,11 @@ def recheck_company(run_id, deal_id):
         package, metrics = rebuild_package(run, week, records, decisions)
         metrics["pending_rechecks"] = [did for did in metrics.get("pending_rechecks", []) if did != deal_id]
         metrics.setdefault("followup_checks", []).append({"deal_id": deal_id, "at": store.now(), "result": result, "usage": usage})
+        db.execute("UPDATE review_records SET record=? WHERE run_id=? AND deal_id=?", (store.encode(candidate), run_id, deal_id))
+        current_evidence = json.loads(db.execute("SELECT evidence FROM deals WHERE id=?", (deal_id,)).fetchone()[0])
+        present = {item["id"] for item in current_evidence}
+        current_evidence.extend(item for item in candidate["evidence"] if item["id"] not in present)
+        db.execute("UPDATE deals SET evidence=? WHERE id=?", (store.encode(current_evidence), deal_id))
         db.execute("UPDATE decisions SET final=? WHERE run_id=? AND deal_id=?", (store.encode(final), run_id, deal_id))
         db.execute("UPDATE runs SET package=?,metrics=? WHERE id=?", (store.encode(package), store.encode(metrics), run_id))
         db.execute("INSERT INTO events(run_id,at,stage,message,detail) VALUES(?,?,?,?,?)", (run_id, store.now(), "correction", f"{candidate['company']}: targeted AI recheck complete", store.encode({"previous": previous, "result": result, "human_override_preserved": bool(previous.get("manual_override"))})))

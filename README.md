@@ -28,16 +28,18 @@ Newsletters -> extract every financing -> deduplicate -> web research
             -> normalize fields -> freeze source-backed inputs
 
 Review & Publish
-Mandate review -> route uncertain and high-risk decisions
-               -> independent check -> final Yes/No decisions
+Reviewer A + Reviewer B (blind, parallel, every deal)
+               -> compare evidence -> adjudicate disagreements and gaps
+               -> targeted research when needed -> final Yes/No decisions
                -> validate rows -> Google Sheet + Stats + roundup
                -> confirm output agreement
 ```
 
 - **Source-backed research:** company sites, announcements, and product/customer
   pages support facts and actual applications, not just keyword matches.
-- **Confidence-based routing:** uncertain cases, proposed exclusions, ambiguous
-  identities, and evidence-backed row corrections receive an independent check.
+- **Evidence-based adjudication:** disagreements, unsupported decisive facts,
+  concrete unresolved mandate criteria receive
+  adjudication. Concrete missing facts trigger targeted primary-source research.
 - **Entity resolution:** names and domains are matched against a supplied
   portfolio snapshot, with fuzzy matches routed for review. No live CRM is connected.
 - **Consistent outputs:** the same finalized Yes rows feed the Sheet, four-week
@@ -56,7 +58,7 @@ Mandate review -> route uncertain and high-risk decisions
 
 ## What Has Been Verified
 
-The latest local test run passed **144 backend tests and 25 frontend tests**.
+The latest local test run passed **156 backend tests and 29 frontend tests**.
 Tests cover routing, normalization, deduplication, currency handling, publication
 contracts, and interface state.
 
@@ -67,8 +69,8 @@ evaluation labels are diagnostic, not a blind representative accuracy benchmark.
 
 The under-two-minute review/publication target remains an optimization goal,
 not a proven guarantee. Preparation includes web research and is timed separately.
-Both fit reviewers use the same prepared evidence; the independent checker does
-not conduct a second live web search. Linked charts in Docs currently need a
+Both blind fit reviewers use the same prepared evidence. The adjudicator can
+request targeted live research when a concrete missing fact could change fit. Linked charts in Docs currently need a
 separate manual refresh.
 
 ## Code And Setup

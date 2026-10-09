@@ -65,11 +65,11 @@ matching. No credentials-free sample dataset is included. See the repository
   as ready-made classifications. Preparing one week does not prepare all ten.
    Research retains actual customer/use-case and market context, not just a
    homepage tagline. Geography stays a company location; market reach remains
-   in source evidence. Older evidence contracts are refreshed on preparation.
+   in source evidence. Routine field accuracy and corrections are checked in processing before freezing the snapshot. Older evidence contracts are refreshed on preparation.
 2. **Review & Publish**, inside the timer: make fresh mandate decisions on every
-   active financing, separate verified portfolio matches, independently review
-   all proposed exclusions and uncertain or corrected rows, apply evidence-backed
-   corrections, validate the final package, publish the identical selected set to
+   active financing with two blind reviewers running in parallel. Accept supported
+   agreements; adjudicate disagreements, evidence gaps, and concrete unresolved mandate criteria. Research concrete missing facts when necessary,
+   resolve final Yes/No, protect verified portfolio exclusions, validate the final package, publish the identical selected set to
    Sheet/Stats/Doc, then read back the values and formatting.
 
 ## Corrections
@@ -145,13 +145,29 @@ prepared deals, source inputs, field corrections, and feedback are preserved.
 An active workflow blocks the reset. Optional `--week WEEK_ID` limits the reset
 to that week. Local snapshot and artifact files remain available on disk.
 
-Maybe is an internal first-pass routing signal only. The independent checker
-resolves every routed record to a final Yes or No, including reasonable
-evidence-backed borderlines when justified. Only final Yes rows are published;
-unresolved Maybes stop publication rather than being silently promoted. Subjective
-model confidence is a routing signal, not a calibrated probability. No real CRM
-is connected, so an unmatched portfolio entry does not mean the fund never saw
-the company.
+New reviews use compact binary Yes/No outputs from both reviewers, without
+confidence scores or confidence intervals. Agreement alone is insufficient when
+decisive facts or mandate interpretation are uncertain. The adjudicator resolves
+those cases against the original evidence and can request targeted live research.
+Only final Yes rows are published. Both original answers, routing reasons,
+adjudication and research citations are saved with the run. The Decisions selector
+shows All or Disagreements, based on the original reviewer answers even after
+resolution or a human correction. Older runs retain their original workflow and
+subjective confidence displays. No real CRM is connected, so an unmatched
+portfolio entry does not mean the fund never saw the company.
+
+The workflow is isolated in the `review-workflow-adjudicator` Git checkpoint.
+Its parent, tagged `review-workflow-two-reviewers`, retains the previous first-pass
+plus blinded independent-check flow with the clarified mandate, sector taxonomy
+and database count display. To restore that workflow without resetting history:
+
+```sh
+git revert review-workflow-adjudicator
+npm --prefix control_center/web run build
+```
+
+Then restart the idle local server as described above. Reverting source code does
+not delete saved runs, prepared data, or human corrections in the local database.
 
 Source counts are per newsletter. The September 16-22 historical week contains
 five emails from each source, fifteen total, not five emails across all sources.
@@ -281,11 +297,17 @@ including request and polling latency. Local-only runs explicitly exclude Google
 publication and are never end-to-end evidence.
 
 Preparation runs use three workers. Review defaults to six workers with twenty-two
-companies per batch. Ready independent checks start while other first-pass batches
-are still running, within that same bounded worker pool. The independent checker
-sees the original evidence but not the first decision. Stage wall-time intervals
-can overlap; `decisioning` and total elapsed time must not be calculated by adding
-them. `DEAL_REVIEW_SCHEDULE=phased` retains the two-wave baseline for comparison.
+companies per batch. Reviewer A and B batches are submitted together to the same
+bounded worker pool; neither receives the other answer. Their wall-time intervals
+overlap, so the parallel-review duration must not be calculated by adding them.
+Comparison, adjudication, targeted research and final resolution have separate
+recorded wall times. Research is conditional and runs across companies in parallel.
+At least two review workers are required so both blind reviewers can start together.
+Repeated selected coverage of the same company and financing is merged before
+output validation; separate rounds remain separate, and every original review
+record and source stays in the audit.
+`DEAL_REVIEW_SCHEDULE` applies only to the retained legacy comparison helper;
+new Review & Publish runs always use the dual independent/adjudicator workflow.
 All defaults currently use Sol; alternatives are selectable:
 
 ```sh

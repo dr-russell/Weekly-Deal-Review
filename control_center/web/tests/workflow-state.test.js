@@ -1,6 +1,49 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {canEditReview, canEditSelectionReview, datasetCounts, decisionMatchesFilter, evidenceGroups, preparationForWeek, preparationForWeeks, resultMessage, runForSelection, runMatchesSelection, runForWeek, runSectionExpanded, runsForWeek, selectedRunWeek, sourceStatus, stageDuration} from '../src/workflow-state.js';
+import {canEditReview, canEditSelectionReview, datasetCounts, decisionMatchesFilter, decisionResolution, workflowProgress, workflowCounts, workflowDuration, evidenceGroups, preparationForWeek, preparationForWeeks, resultMessage, runForSelection, runMatchesSelection, runForWeek, runSectionExpanded, runsForWeek, selectedRunWeek, sourceStatus, stageDuration} from '../src/workflow-state.js';
+
+test('resolved and human-corrected disagreements still compare original reviewer answers',()=>{
+  const decision={first_pass:{fit:'No',known_investment:false},verification:{fit:'Yes',known_investment:false},final:{fit:'Yes',review_resolution:{result:'adjudicated'}}};
+  assert.equal(decisionMatchesFilter(decision,'disagreed'),true);
+  assert.equal(decisionResolution(decision),'Adjudicated');
+  assert.equal(decisionMatchesFilter({...decision,final:{fit:'No',manual_override:{},review_resolution:{result:'adjudicated'}}},'disagreed'),true);
+  assert.equal(decisionResolution({...decision,final:{...decision.final,manual_override:{}}}),'User corrected');
+  assert.equal(decisionResolution({...decision,final:{review_resolution:{result:'researched_and_adjudicated'}}}),'Research + adjudication');
+});
+
+test('adjudication stays active during targeted research and local publication is skipped',()=>{
+  let steps=workflowProgress({status:'running',stage:'research',metrics:{dual_review_complete:true,compare_complete:true,adjudication_complete:true}});
+  assert.equal(steps[0].done,true);
+  assert.equal(steps[1].running,true);
+  assert.equal(steps[1].done,false);
+  assert.equal(steps.length,5);
+  assert.equal(workflowProgress({status:'running',stage:'comparison'})[1].running,true);
+  steps=workflowProgress({status:'local_completed',stage:'complete'});
+  assert.equal(steps[1].done,true);
+  assert.equal(steps[3].done,false);
+  assert.equal(steps[3].skipped,true);
+  assert.equal(steps[4].done,false);
+  assert.equal(steps[4].skipped,true);
+  assert.ok(workflowProgress(null).every(step=>!step.done&&!step.running));
+});
+
+test('adjudicate duration includes comparison, research and final resolution',()=>{
+  const timings={dual_review:50,reviewer_a:45,reviewer_b:50,comparison:.2,adjudication:12,research:16,final_resolution:8};
+  assert.equal(workflowDuration(timings,'adjudication'),36.2);
+  assert.equal(workflowDuration(timings,'dual_review'),50);
+  assert.equal(workflowDuration({},'adjudication'),null);
+});
+
+test('review counts use completed reviewer pairs and adjudication waits for researched decisions',()=>{
+  assert.equal(workflowCounts({metrics:{companies_reviewed:114,reviewer_a_ready:22,reviewer_b_ready:22,reviewed_deals:0}}).reviewed,0);
+  assert.equal(workflowCounts({metrics:{companies_reviewed:114,reviewed_deals:22}}).reviewed,22);
+  const metrics={companies_reviewed:114,dual_review_complete:true,adjudicated:4,adjudication_ready:4,adjudication_complete:true,researched:3,research_ready:0};
+  assert.deepEqual(workflowCounts({status:'running',stage:'research',metrics}),{reviewed:114,total:114,resolved:1,adjudicated:4,researchReady:0,researched:3});
+  assert.equal(workflowCounts({status:'running',metrics:{...metrics,research_ready:3}}).resolved,1);
+  assert.equal(workflowCounts({status:'running',metrics:{...metrics,final_resolution_ready:3}}).resolved,4);
+  assert.equal(workflowCounts({status:'running',metrics:{...metrics,adjudication_resolved:2}}).resolved,2);
+  assert.equal(workflowCounts({status:'local_completed',metrics}).resolved,4);
+});
 
 test('evidence groups repeated pages and preserves every citation identifier', () => {
   const sources=[{id:'first',url:'https://example.com/news',quote:'A funding round'},{id:'second',url:'https://example.com/news/',quote:'A funding round'},{id:'third',url:'https://example.com/news#details',quote:'Another supporting excerpt'}];

@@ -95,6 +95,45 @@ export function decisionMatchesFilter(decision, filter) {
   return true;
 }
 
+export function decisionResolution(decision) {
+  if (decision.final?.manual_override) return 'User corrected';
+  const result=decision.final?.review_resolution?.result;
+  return ({supported_agreement:'Agreement',adjudicated:'Adjudicated',researched_and_adjudicated:'Research + adjudication'})[result] || 'Previous workflow';
+}
+
+export function workflowProgress(run) {
+  const metrics=run?.metrics||{},stage=run?.stage;
+  const finished=['completed','local_completed'].includes(run?.status);
+  return [
+    {key:'dual_review',name:'Independent reviews',done:finished||Boolean(metrics.dual_review_complete),running:stage==='dual_review'},
+    {key:'adjudication',name:'Adjudicate',done:finished||Boolean(metrics.final_resolution_complete),running:['comparison','adjudication','research','final_resolution'].includes(stage)},
+    {key:'validation',name:'Validate Rows',done:finished||['publication','confirmation','complete'].includes(stage),running:stage==='validation'},
+    {key:'publication',name:'Publish',done:run?.status==='completed'||stage==='confirmation',running:stage==='publication',skipped:run?.status==='local_completed'},
+    {key:'confirmation',name:'Confirm',done:run?.status==='completed',running:stage==='confirmation',skipped:run?.status==='local_completed'},
+  ].map(step=>({...step,running:run?.status==='running'&&!step.done&&step.running}));
+}
+
+export function workflowCounts(run) {
+  const metrics=run?.metrics||{};
+  const finished=['completed','local_completed'].includes(run?.status);
+  const total=metrics.companies_reviewed??0;
+  const adjudicated=metrics.adjudicated??0;
+  const researched=metrics.researched??0;
+  // A deal is reviewed only when both original answers exist for that deal.
+  const reviewed=metrics.dual_review_complete?total:metrics.reviewed_deals??0;
+  // Older recorded runs counted initial assessments as ready, including cases awaiting research.
+  const resolved=finished||metrics.final_resolution_complete?adjudicated:
+    metrics.adjudication_resolved??((metrics.adjudication_complete||metrics.adjudication_assessment_complete)?
+      Math.max(0,(metrics.adjudication_ready??0)-researched+(metrics.final_resolution_ready??0)):0);
+  return {reviewed,total,resolved,adjudicated,researchReady:metrics.research_ready??0,researched};
+}
+
+export function workflowDuration(timings,key) {
+  if(key!=='adjudication')return timings[key];
+  const phases=['comparison','adjudication','research','final_resolution'].map(name=>timings[name]).filter(Number.isFinite);
+  return phases.length?phases.reduce((total,value)=>total+value,0):null;
+}
+
 export function stageDuration(seconds) {
   if (seconds == null) return '--';
   return (seconds < 1 ? .1 : seconds).toFixed(1) + 's';

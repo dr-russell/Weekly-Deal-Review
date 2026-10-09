@@ -134,7 +134,7 @@ def restore_review_ids(decisions, mapping):
         decision["id"] = entry["id"]
         try:
             decision["evidence_ids"] = [entry["evidence"][key] for key in decision["evidence_ids"]]
-            for correction in decision["field_corrections"]:
+            for correction in decision.get("field_corrections", []):
                 correction["evidence_id"] = entry["evidence"][correction["evidence_id"]]
         except KeyError as error:
             raise ValueError("Review cited an evidence identifier absent from this company's record") from error

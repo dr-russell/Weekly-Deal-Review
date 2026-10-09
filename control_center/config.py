@@ -18,7 +18,7 @@ MODEL = os.environ.get("DEAL_REVIEW_MODEL", "gpt-6-sol")
 EXTRACT_MODEL = os.environ.get("DEAL_EXTRACT_MODEL", MODEL)
 VERIFY_MODEL = os.environ.get("DEAL_VERIFY_MODEL", MODEL)
 MAX_WORKERS = 3
-REVIEW_WORKERS = max(1, min(8, int(os.environ.get("DEAL_REVIEW_WORKERS", "6"))))
+REVIEW_WORKERS = max(2, min(8, int(os.environ.get("DEAL_REVIEW_WORKERS", "6"))))
 BATCH_SIZE = max(1, int(os.environ.get("DEAL_REVIEW_BATCH_SIZE", "22")))
 REVIEW_SCHEDULE = os.environ.get("DEAL_REVIEW_SCHEDULE", "streaming")
 if REVIEW_SCHEDULE not in {"phased", "streaming"}:

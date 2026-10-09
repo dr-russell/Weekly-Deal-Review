@@ -591,7 +591,7 @@ class StoreTests(unittest.TestCase):
                 self.assertNotEqual(manifest["sha256"], next_manifest["sha256"])
                 self.assertEqual((root / manifest["path"]).read_bytes(), old_bytes)
                 self.assertEqual(revised[0]["fields"]["amount"], "$10 million")
-                self.assertEqual(revised[0]["evidence"][-1]["enrichment_version"], "application-context-v3")
+                self.assertEqual(revised[0]["evidence"][-1]["enrichment_version"], "processing-fields-v4")
                 self.assertEqual(store.get_run(rid)["status"], "completed")
                 self.assertFalse(store.query("SELECT * FROM decisions WHERE run_id=?", (rid,)))
 
@@ -603,6 +603,8 @@ class StoreTests(unittest.TestCase):
             pipeline.enrich_batch([candidate], "test")
         prompt = model.call_args.args[0]
         self.assertIn("Read beyond the headline/tagline", prompt)
+        self.assertIn("Audit every row field", prompt)
+        self.assertIn("Routine field correction belongs HERE in processing", prompt)
         self.assertIn("foreign headquarters alone", prompt)
         self.assertIn("at most 25 quoted words per URL", prompt)
         self.assertNotIn("Must not be supplied to research", prompt)
@@ -619,6 +621,15 @@ class StoreTests(unittest.TestCase):
         self.assertTrue(d["evidence"][0]["quote_shortened"])
         self.assertIn("includes debt", d["evidence"][0]["summary"])
         self.assertEqual(d["evidence"][0]["fields"], ["description", "amount"])
+
+    def test_processing_preserves_financing_qualifiers_before_review(self):
+        from control_center.pipeline import apply_enrichment
+        d = deal(amount="$10 million")
+        item = {"fields": d["fields"], "missing": {}, "evidence": [{"url": "https://example.com/news", "quote": "An anticipated $10 million funding round", "summary": "The announced target amount is anticipated.", "fields": ["amount"]}]}
+        apply_enrichment(d, item, "process")
+        self.assertIn("anticipated", d["fields"]["amount"])
+        self.assertEqual(d["evidence"][-1]["kind"], "processing_correction")
+        self.assertFalse(validate_selected([d], {d["id"]: decision()}))
 
     def test_enrichment_does_not_truncate_overlong_factual_context(self):
         from control_center.pipeline import apply_enrichment

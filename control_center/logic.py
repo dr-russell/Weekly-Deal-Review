@@ -1,4 +1,5 @@
 import hashlib
+import copy
 import re
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -446,9 +447,27 @@ def validate_selected(deals, decisions, start=None, end=None):
     return issues
 
 
+def publication_records(deals, decisions):
+    """Merge repeated selected financing coverage while retaining every review record."""
+    selected = [copy.deepcopy(d) for d in deals if decisions[d["id"]]["fit"] == "Yes" and not decisions[d["id"]].get("known_investment")]
+    # Require the same company name as well as compatible financing facts here;
+    # different companies may share a parent domain or announcement page.
+    groups = {}
+    for deal in selected:
+        groups.setdefault(normalized_name(deal["company"]), []).append(deal)
+    merged, changes = [], []
+    for group in groups.values():
+        records, coverage = consolidate_prepared(group)
+        merged.extend(records)
+        changes.extend(coverage)
+    unselected = [d for d in deals if decisions[d["id"]]["fit"] != "Yes" or decisions[d["id"]].get("known_investment")]
+    return unselected + merged, changes
+
+
 def make_package(deals, decisions, start, end, ratebook=None):
     if any(decision["fit"] not in {"Yes", "No"} for decision in decisions.values()):
         raise ValueError("Final package cannot contain unresolved Maybe decisions")
+    deals, _ = publication_records(deals, decisions)
     selected = [d for d in deals if decisions[d["id"]]["fit"] == "Yes" and not decisions[d["id"]].get("known_investment") and start <= d["fields"]["deal_date"] <= end]
     rows, amount, excluded, lower_bounds, conversions, normalized = [], Decimal(0), [], [], [], []
     for deal in selected:
