@@ -28,3 +28,7 @@
 .review-comparison>div{border-left:2px solid #dce6df;margin-top:12px;padding-left:12px;font-size:11px}
 .review-comparison .badge{margin-left:8px}
 .review-comparison p{margin-top:5px!important}
+
+.database-company{display:flex;align-items:flex-start;gap:9px}.database-company>div{min-width:0}.company-favicon{width:26px;height:26px;flex:0 0 26px;display:grid;place-items:center;border:1px solid #e4e9e6;border-radius:5px;background:#fff;overflow:hidden;margin-top:1px}.company-favicon img{display:block;object-fit:contain}.company-favicon>span{color:#647568;font-size:12px;font-weight:600}
+
+.database-table{min-width:850px}.database-company{min-width:160px}
