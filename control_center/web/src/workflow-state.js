@@ -90,6 +90,9 @@ export function decisionMatchesFilter(decision, filter) {
   const uncertain = first?.fit === 'Maybe' || (Number.isFinite(first?.confidence) && first.confidence < .9);
   const disagreed = Boolean(first && independent &&
     (first.fit !== independent.fit || Boolean(first.known_investment) !== Boolean(independent.known_investment)));
+  const selected = decision.final?.fit === 'Yes' && !decision.final?.known_investment;
+  if (filter === 'selected') return selected;
+  if (filter === 'excluded') return Boolean(decision.final) && !selected;
   if (filter === 'uncertain') return uncertain;
   if (filter === 'disagreed') return disagreed;
   return true;

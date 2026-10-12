@@ -258,3 +258,19 @@ test('review results stay bound to the exact selected weeks',()=>{
  assert.equal(canEditSelectionReview(group,[group,single],[weeks[0],{...weeks[1],updated_at:'changed'}],['a','b']),false);
  assert.equal(canEditSelectionReview(single,[group,single],weeks,['a']),true);
 });
+
+
+test('selected and excluded use final decisions and exclude known investments from selected',()=>{
+  const decisions=[
+    {id:'selected',first_pass:{fit:'No'},verification:{fit:'Yes'},final:{fit:'Yes'}},
+    {id:'excluded',first_pass:{fit:'Yes'},verification:{fit:'Yes'},final:{fit:'No',manual_override:{}}},
+    {id:'portfolio',first_pass:{fit:'Yes'},verification:{fit:'Yes'},final:{fit:'Yes',known_investment:true}},
+    {id:'pending',first_pass:{fit:'Yes'}}
+  ];
+  const before=JSON.stringify(decisions);
+  assert.deepEqual(decisions.filter(d=>decisionMatchesFilter(d,'selected')).map(d=>d.id),['selected']);
+  assert.deepEqual(decisions.filter(d=>decisionMatchesFilter(d,'excluded')).map(d=>d.id),['excluded','portfolio']);
+  assert.deepEqual(decisions.filter(d=>decisionMatchesFilter(d,'disagreed')).map(d=>d.id),['selected']);
+  assert.equal(decisions.filter(d=>decisionMatchesFilter(d,'all')).length,4);
+  assert.equal(JSON.stringify(decisions),before);
+});
