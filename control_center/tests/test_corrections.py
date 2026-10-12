@@ -128,6 +128,82 @@ class CorrectionTests(unittest.TestCase):
         result = correct_decision(self.run, "example", "Yes", "Confirmed customer evidence", self.final)
         self.assertEqual(result["decisions"][0]["final"]["reason"], "Confirmed customer evidence")
 
+    def test_table_save_publishes_and_verifies_corrected_outputs(self):
+        with patch("control_center.corrections.Publisher") as publisher:
+            publisher.return_value.publish.return_value = {"written_rows": 1}
+            result = correct_decision(self.run, "example", "No", "Outside mandate", self.final, publish_outputs=True)
+        publisher.assert_called_once_with("test")
+        publisher.return_value.publish.assert_called_once()
+        publisher.return_value.verify.assert_called_once()
+        self.assertEqual(publisher.return_value.publish.call_args.args[0]["rows"], [])
+        self.assertFalse(result["metrics"]["outputs_dirty"])
+        self.assertNotIn("auto_publish_deal_ids", result["metrics"])
+        self.assertEqual(result["decisions"][0]["final"]["fit"], "No")
+
+    def test_table_save_local_review_does_not_contact_google(self):
+        store.execute("UPDATE runs SET target='local',status='local_completed' WHERE id=?", (self.run,))
+        with patch("control_center.corrections.Publisher") as publisher:
+            result = correct_decision(self.run, "example", "No", "Outside mandate", self.final, publish_outputs=True)
+        publisher.assert_not_called()
+        self.assertNotIn("auto_publish_deal_ids", result["metrics"])
+
+    def test_auto_publication_failure_keeps_saved_decision_and_explicit_retry(self):
+        with patch("control_center.corrections.Publisher") as publisher:
+            publisher.return_value.verify.side_effect = RuntimeError("Readback mismatch")
+            result = correct_decision(self.run, "example", "No", "Outside mandate", self.final, publish_outputs=True)
+        publisher.return_value.publish.assert_called_once()
+        self.assertEqual(result["decisions"][0]["final"]["fit"], "No")
+        self.assertTrue(result["metrics"]["outputs_dirty"])
+        self.assertEqual(result["metrics"]["correction_publication_error"], "Readback mismatch")
+        self.assertEqual(result["metrics"]["auto_publish_deal_ids"], ["example"])
+        from control_center.corrections import auto_publish_corrections
+        with patch("control_center.corrections.Publisher") as publisher:
+            auto_publish_corrections(self.run)
+        publisher.assert_not_called()
+
+    def test_auto_refresh_waits_for_required_recheck_then_publishes(self):
+        from control_center.corrections import auto_publish_corrections
+        self.edit_field("geography", "Toronto, Canada")
+        run = store.get_run(self.run)
+        store.update_run(self.run, metrics={**run["metrics"], "auto_publish_deal_ids": ["example"]})
+        with patch("control_center.corrections.Publisher") as publisher:
+            publisher.return_value.publish.return_value = {"written_rows": 1}
+            pending = auto_publish_corrections(self.run)
+            publisher.assert_not_called()
+            self.assertEqual(pending["metrics"]["pending_rechecks"], ["example"])
+            suggested = {**self.final, "field_corrections": []}
+            with patch.object(pipeline, "classify_batch", return_value=([suggested], {})):
+                result = recheck_company(self.run, "example")
+            publisher.return_value.publish.assert_called_once()
+            publisher.return_value.verify.assert_called_once()
+        self.assertFalse(result["metrics"]["outputs_dirty"])
+
+    def test_same_fit_confirmation_publishes_corrected_company_fields(self):
+        self.edit_field("geography", "Toronto, Canada")
+        with patch("control_center.corrections.Publisher") as publisher:
+            publisher.return_value.publish.return_value = {"written_rows": 1}
+            result = correct_decision(self.run, "example", "Yes", "Confirmed corrected location", self.final, publish_outputs=True)
+        publisher.return_value.publish.assert_called_once()
+        self.assertEqual(publisher.return_value.publish.call_args.args[0]["rows"][0][10], "Toronto, Canada")
+        self.assertEqual(result["metrics"]["pending_rechecks"], [])
+
+    def test_auto_publication_does_not_include_unqueued_or_legacy_corrections(self):
+        original_metrics = store.get_run(self.run)["metrics"]
+        for metadata in [{"unpublished_deal_ids": ["another"]}, {}]:
+            with self.subTest(metadata=metadata):
+                current = store.get_run(self.run)
+                store.update_run(self.run, metrics={**original_metrics, "outputs_dirty": True, **metadata})
+                with patch("control_center.corrections.Publisher") as publisher:
+                    result = correct_decision(self.run, "example", "No", "New explanation "+str(metadata), current["decisions"][0]["final"], publish_outputs=True)
+                publisher.assert_not_called()
+                self.assertTrue(result["metrics"]["outputs_dirty"])
+
+    def test_reason_only_table_edit_does_not_republish_unchanged_outputs(self):
+        with patch("control_center.corrections.Publisher") as publisher:
+            result = correct_decision(self.run, "example", "Yes", "Updated local reasoning", self.final, publish_outputs=True)
+        publisher.assert_not_called()
+        self.assertFalse(result["metrics"]["outputs_dirty"])
+
     def test_second_correction_retains_original_model_answer_and_audit(self):
         previous = self.correct()["decisions"][0]["final"]
         result = self.correct("Yes", previous)

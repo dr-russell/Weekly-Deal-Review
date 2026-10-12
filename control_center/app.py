@@ -323,6 +323,7 @@ class DecisionCorrection(BaseModel):
     source_url: str = Field(default="", max_length=2000)
     evidence_id: str = ""
     expected_final: dict
+    publish_outputs: bool = False
 
 
 class FieldCorrection(BaseModel):
@@ -405,7 +406,7 @@ def decision_correction(run_id: str, deal_id: str, item: DecisionCorrection):
     if not JOB_LOCK.acquire(blocking=False):
         raise HTTPException(409, "Another workflow is running")
     try:
-        return correct_decision(run_id, deal_id, item.fit, item.reason, item.expected_final, item.source_url, item.evidence_id)
+        return correct_decision(run_id, deal_id, item.fit, item.reason, item.expected_final, item.source_url, item.evidence_id, publish_outputs=item.publish_outputs)
     except CorrectionError as error:
         raise HTTPException(error.status, str(error))
     finally:

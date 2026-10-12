@@ -29,7 +29,7 @@ def run_records(db, run):
     return [store.unpack(dict(row), ["fields", "block_ids", "sources", "evidence", "missing", "portfolio_match"]) for row in db.execute("SELECT * FROM deals WHERE week_id=? AND active=1 ORDER BY company", (run["week_id"],))]
 
 
-def rebuild_package(run, week, deals, decisions):
+def rebuild_package(run, week, deals, decisions, edited_deal_id=None):
     if {deal["id"] for deal in deals} != set(decisions):
         raise CorrectionError("Deal records changed since this review; review the updated week first")
     output_deals, merged_coverage = publication_records(deals, decisions)
@@ -46,6 +46,10 @@ def rebuild_package(run, week, deals, decisions):
     selected = [d for d in output_deals if decisions[d["id"]]["fit"] == "Yes" and not decisions[d["id"]].get("known_investment") and week["start"] <= d["fields"]["deal_date"] <= week["end"]]
     changed_outputs = package["rows"] != run["package"]["rows"] or any(package["stats"][key] != run["package"]["stats"][key] for key in ["count", "capital_usd_m"])
     metrics = {**run["metrics"], **package["stats"], "excluded": sum(d["fit"] == "No" and not d.get("known_investment") for d in decisions.values()), "known_investments": sum(bool(d.get("known_investment")) for d in decisions.values()), "manual_corrections": sum(bool(d.get("manual_override")) for d in decisions.values()), "outputs_dirty": run["target"] != "local" and (run["metrics"].get("outputs_dirty", False) or changed_outputs)}
+    if run["metrics"].get("outputs_dirty") and "unpublished_deal_ids" not in run["metrics"]:
+        metrics["unscoped_output_corrections"] = True
+    if changed_outputs and run["target"] != "local" and edited_deal_id:
+        metrics["unpublished_deal_ids"] = sorted(set(metrics.get("unpublished_deal_ids", [])) | {edited_deal_id})
     metrics["row_completeness"] = {"selected_rows": len(selected), "fields_per_row": len(FIELDS), "populated_fields": sum(bool(d["fields"][k]) for d in selected for k in FIELDS), "documented_unavailable": remaining_missing_fields(selected), "unexplained_blanks": 0}
     metrics["merged_selected_coverage"] = merged_coverage
     return package, metrics
@@ -129,7 +133,7 @@ def user_decision(previous, feedback):
     return {**(previous or {"confidence": None, "known_investment": False, "evidence_ids": []}), "fit": feedback["fit"], "reason": feedback["reason"], "manual_override": {"at": feedback["at"], "model_final": original, "source_url": feedback.get("source_url", ""), "evidence_id": feedback.get("evidence_id", ""), "previous_fit": (prior or {}).get("fit")}}
 
 
-def correct_decision(run_id, deal_id, fit, reason, expected_final, source_url="", evidence_id=""):
+def correct_decision(run_id, deal_id, fit, reason, expected_final, source_url="", evidence_id="", publish_outputs=False):
     reason = reason.strip()
     if fit not in {"Yes", "No"} or len(reason) > 3000:
         raise CorrectionError("Choose Yes or No; reasoning must be at most 3000 characters", 422)
@@ -160,15 +164,17 @@ def correct_decision(run_id, deal_id, fit, reason, expected_final, source_url=""
                 raise CorrectionError("This identity matches an existing investment; recheck the company before including it", 422)
             final["known_investment"] = True
         save_baseline(db, run, deals, {**decisions, deal_id: previous})
-        package, metrics = rebuild_package(run, week, deals, decisions)
+        package, metrics = rebuild_package(run, week, deals, decisions, deal_id)
         metrics["pending_rechecks"] = [did for did in metrics.get("pending_rechecks", []) if did != deal_id]
+        if publish_outputs and run["target"] != "local":
+            metrics["auto_publish_deal_ids"] = sorted(set(metrics.get("auto_publish_deal_ids", [])) | {deal_id})
         company = next(deal["company"] for deal in deals if deal["id"] == deal_id)
         db.execute("UPDATE decisions SET final=? WHERE run_id=? AND deal_id=?", (store.encode(final), run_id, deal_id))
         db.execute("UPDATE feedback SET active=0 WHERE deal_id=?", (deal_id,))
         db.execute("INSERT INTO feedback(id,deal_id,fit,reason,previous,at,source_url,evidence_id) VALUES(?,?,?,?,?,?,?,?)", (uuid.uuid4().hex[:16], deal_id, fit, reason, store.encode(previous), at, source_url, evidence_id))
         db.execute("UPDATE runs SET package=?,metrics=? WHERE id=?", (store.encode(package), store.encode(metrics), run_id))
         db.execute("INSERT INTO events(run_id,at,stage,message,detail) VALUES(?,?,?,?,?)", (run_id, at, "correction", f"{company}: final decision changed from {previous['fit']} to {fit} by user", store.encode({"deal_id": deal_id, "reason": reason, "previous": previous, "final": final, "google_updated": False})))
-    return store.get_run(run_id)
+    return auto_publish_corrections(run_id)
 
 
 def correct_record_decision(deal_id, fit, reason, source_url, evidence_id, expected_final, expected_fields):
@@ -280,7 +286,7 @@ def correct_fields(deal_id, changes, reason, source_url, evidence_id, expected_f
         deal["portfolio_match"] = portfolio_match(deal, json.loads(portfolio.read_text()) if portfolio.exists() else [])
         if run:
             records = [deal if d["id"] == deal_id else d for d in records]
-            package, metrics = rebuild_package(run, week, records, decisions)
+            package, metrics = rebuild_package(run, week, records, decisions, deal_id)
             if set(changed) & FIT_FIELDS:
                 metrics["pending_rechecks"] = sorted(set(metrics.get("pending_rechecks", [])) | {deal_id})
             metrics["manual_field_corrections"] = metrics.get("manual_field_corrections", 0) + len(changed)
@@ -337,7 +343,7 @@ def recheck_company(run_id, deal_id):
         fresh, _ = editable_run(db, run_id)
         if fresh["metrics"] != run["metrics"]:
             raise CorrectionError("Review changed while rechecking; reload")
-        package, metrics = rebuild_package(run, week, records, decisions)
+        package, metrics = rebuild_package(run, week, records, decisions, deal_id)
         metrics["pending_rechecks"] = [did for did in metrics.get("pending_rechecks", []) if did != deal_id]
         metrics.setdefault("followup_checks", []).append({"deal_id": deal_id, "at": store.now(), "result": result, "usage": usage})
         db.execute("UPDATE review_records SET record=? WHERE run_id=? AND deal_id=?", (store.encode(candidate), run_id, deal_id))
@@ -348,7 +354,35 @@ def recheck_company(run_id, deal_id):
         db.execute("UPDATE decisions SET final=? WHERE run_id=? AND deal_id=?", (store.encode(final), run_id, deal_id))
         db.execute("UPDATE runs SET package=?,metrics=? WHERE id=?", (store.encode(package), store.encode(metrics), run_id))
         db.execute("INSERT INTO events(run_id,at,stage,message,detail) VALUES(?,?,?,?,?)", (run_id, store.now(), "correction", f"{candidate['company']}: targeted AI recheck complete", store.encode({"previous": previous, "result": result, "human_override_preserved": bool(previous.get("manual_override"))})))
-    return store.get_run(run_id)
+    return auto_publish_corrections(run_id)
+
+
+def auto_publish_corrections(run_id):
+    """Publish explicitly queued table edits once safe, retaining saved edits on failure."""
+    run = store.get_run(run_id)
+    metrics = run["metrics"]
+    queued = set(metrics.get("auto_publish_deal_ids", []))
+    if not queued or run["target"] == "local":
+        return run
+    if not metrics.get("outputs_dirty"):
+        metrics.pop("auto_publish_deal_ids", None)
+        store.update_run(run_id, metrics=metrics)
+        return store.get_run(run_id)
+    if metrics.get("pending_rechecks") or metrics.get("correction_publication_error"):
+        return run
+    # The existing publisher keeps Sheet/Stats/Doc consistent as one reviewed
+    # package. Do not include separate edits that the user has not queued.
+    if metrics.get("unscoped_output_corrections") or set(metrics.get("unpublished_deal_ids", [])) - queued:
+        return run
+    try:
+        return publish_corrections(run_id)
+    except Exception as error:
+        # Saving already succeeded. Do not retry a potentially partial write;
+        # retain the pending state and expose an explicit Refresh Outputs action.
+        fresh = store.get_run(run_id)
+        fresh["metrics"]["correction_publication_error"] = str(error)
+        store.update_run(run_id, metrics=fresh["metrics"])
+        return store.get_run(run_id)
 
 
 def publish_corrections(run_id):
@@ -369,6 +403,8 @@ def publish_corrections(run_id):
         publisher.verify(run["package"], snapshot)
         metrics.update(outputs_dirty=False, corrections_published_at=store.now(), correction_publication_seconds=time.perf_counter() - started, publication=result)
         metrics.pop("correction_publication_error", None)
+        for key in ["auto_publish_deal_ids", "unpublished_deal_ids", "unscoped_output_corrections"]:
+            metrics.pop(key, None)
         store.update_run(run_id, metrics=metrics, package=run["package"])
         store.event(run_id, "complete", "Corrected Sheet, Stats, and roundup published and confirmed", {"seconds": metrics["correction_publication_seconds"], "ai_rerun": False})
     except Exception as error:

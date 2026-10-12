@@ -115,6 +115,14 @@ snapshots and exchange-rate sources for historical inspection.
 - Refresh Outputs publishes the corrected package without rerunning the full
   review. Unconfirmed fit changes block refresh. A partial Google failure leaves
   outputs pending and retryable; original run timing remains unchanged.
+- Saving a decision in the Decisions table queues an automatic Google output
+  refresh for that deal. It runs after required confirmations/rechecks complete,
+  using the review's existing destination and consistent Sheet/Stats/Doc package.
+  Other unpublished edits must also be explicitly queued from the table or
+  published with Refresh Outputs. Local-only reviews stay local. If publication
+  fails, the decision remains saved and Refresh Outputs provides an explicit
+  retry; no automatic retry or sign-in is attempted. Company-panel edits retain
+  the manual refresh behavior unless resolving an already queued table edit.
 - Source repair rejects tracking/reporting domains as company identity. A dry-run
   audit can be followed by an applied reconstruction from original extractions:
 
@@ -295,7 +303,8 @@ are optional, and an unsourced edit is recorded as a user assertion. Similar
 sector corrections are retrieved as guidance; newer evidence remains
 authoritative. Current-review corrections rebuild the local package; corrections
 after an input refresh are saved for the next review while preserving historical
-results. Saving a correction does not silently republish Google outputs.
+results. Company-panel saves remain local; decision-table saves explicitly queue
+automatic output refresh after the required checks, as described above.
 
 ## Timing, Models, And Costs
 
