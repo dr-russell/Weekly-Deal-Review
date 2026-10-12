@@ -3,14 +3,15 @@ import os
 import pickle
 
 from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import AuthorizedSession
+from .auth_guard import AuthorizedSession, complete_reconnection
 
 from .config import GMAIL_TOKEN, GOOGLE_ACCOUNT, GOOGLE_CLIENT, GOOGLE_TOKEN, IDENTITY_SCOPES, SCOPES
 
 
-def verified_account(creds, gmail=False):
+def verified_account(creds, gmail=False, reconnecting=False):
     url = "https://gmail.googleapis.com/gmail/v1/users/me/profile" if gmail else "https://openidconnect.googleapis.com/v1/userinfo"
-    with AuthorizedSession(creds) as session:
+    with AuthorizedSession(creds, token_path=GMAIL_TOKEN if gmail else GOOGLE_TOKEN,
+                           connection="gmail" if gmail else "google_write", reconnecting=reconnecting) as session:
         response = session.get(url, timeout=20)
         response.raise_for_status()
         profile = response.json()
@@ -34,19 +35,20 @@ def main():
     parser.add_argument("--gmail", action="store_true")
     args = parser.parse_args()
     if args.gmail:
-        creds = verified_account(authorize(["https://www.googleapis.com/auth/gmail.readonly"]), gmail=True)
+        creds = verified_account(authorize(["https://www.googleapis.com/auth/gmail.readonly"]), gmail=True, reconnecting=True)
         token = GMAIL_TOKEN
         token.parent.mkdir(parents=True, exist_ok=True)
         with token.open("wb") as handle:
             pickle.dump(creds, handle)
         token.chmod(0o600)
+        complete_reconnection(token)
         print(f"MetaProp Gmail read-only authorization saved for {creds.account}.")
         return
     if GOOGLE_TOKEN.exists() and not args.reauthorize:
         print("Token exists. Use --reauthorize to choose a different Google account.")
         return
     print("Gmail authorization is unchanged.", flush=True)
-    creds = verified_account(authorize(SCOPES + IDENTITY_SCOPES))
+    creds = verified_account(authorize(SCOPES + IDENTITY_SCOPES), reconnecting=True)
     if not creds.has_scopes(SCOPES):
         raise RuntimeError("Sheets and Docs permissions were not granted")
     GOOGLE_TOKEN.parent.mkdir(parents=True, exist_ok=True)
@@ -54,6 +56,7 @@ def main():
     with os.fdopen(fd, "w") as handle:
         handle.write(creds.to_json())
     GOOGLE_TOKEN.chmod(0o600)
+    complete_reconnection(GOOGLE_TOKEN)
     print(f"Google write authorization saved for {creds.account}.")
 
 

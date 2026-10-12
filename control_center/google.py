@@ -7,15 +7,17 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 from pathlib import Path
 
-from google.auth.transport.requests import AuthorizedSession, Request
+from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 
 from . import store
+from .auth_guard import AuthorizedSession as GuardedSession, check_connection, refresh_credentials
 from .config import ARTIFACTS, GOOGLE_ACCOUNT, GOOGLE_TOKEN, HEADERS, SCOPES, TARGETS
 from .logic import amount_usd_m, capital_usd_m, normalized_name, normalized_usd_amount, sheet_amount, announced_usd_amount, normalize_round
 
 
 def credentials():
+    check_connection(GOOGLE_TOKEN, "google_write")
     if not GOOGLE_ACCOUNT:
         raise RuntimeError('Google settings missing; configure control_center/google.local.json first')
     if not GOOGLE_TOKEN.exists():
@@ -26,11 +28,15 @@ def credentials():
     if not creds.has_scopes(SCOPES):
         raise RuntimeError("Google authorization lacks Sheets/Docs write scopes")
     if creds.expired:
-        creds.refresh(Request())
+        refresh_credentials(creds, Request(), GOOGLE_TOKEN, "google_write")
         fd = os.open(GOOGLE_TOKEN, os.O_WRONLY | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as handle:
             handle.write(creds.to_json())
     return creds
+
+
+def AuthorizedSession(creds):
+    return GuardedSession(creds, token_path=GOOGLE_TOKEN, connection="google_write")
 
 
 def request(session, method, url, **kwargs):
@@ -68,14 +74,19 @@ def selected_day(package, day):
     return any(period["start"]<=day<=period["end"] for period in package.get("selection_weeks", [{"start":package["start"], "end":package["end"]}]))
 
 
+def ic_week_label(start, end):
+    a, b = date.fromisoformat(str(start)), date.fromisoformat(str(end))
+    return f"{a.month}/{a.day} - {b.month}/{b.day}"
+
+
 def period_text(package):
     periods = package.get("selection_weeks", [])
-    return "Selected IC weeks: " + "; ".join(period["start"]+" to "+period["end"] for period in periods) + "\n" if periods else ""
+    return "Selected IC weeks: " + "; ".join(ic_week_label(period["start"], period["end"]) for period in periods) + "\n" if periods else ""
 
 
 def stats_for(package, historical):
     if package.get("week_stats"):
-        return [[period["start"]+" to "+period["end"], period["count"], round(period["capital_usd_m"],4)] for period in package["week_stats"]], []
+        return [[ic_week_label(period["start"], period["end"]), period["count"], round(period["capital_usd_m"],4)] for period in package["week_stats"]], []
     end = date.fromisoformat(package["end"])
     table = []
     excluded = []
@@ -95,7 +106,7 @@ def stats_for(package, historical):
                     amount += numeric
                 else:
                     excluded.append({"company": row[3], "week": str(a), "reason": reason})
-        table.append([f"{a.month}/{a.day} - {b.month}/{b.day}", count, round(amount, 4)])
+        table.append([ic_week_label(a, b), count, round(amount, 4)])
     return table, excluded
 
 

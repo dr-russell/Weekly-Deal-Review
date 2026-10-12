@@ -9,10 +9,10 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from google.auth.transport.requests import AuthorizedSession, Request
-from google.auth.exceptions import RefreshError
+from google.auth.transport.requests import Request
 
 from . import store
+from .auth_guard import AuthorizedSession as GuardedSession, check_connection, refresh_credentials
 from .config import ARTIFACTS, BATCH_SIZE, DATA, EXTRACT_MODEL, FIELDS, GMAIL_TOKEN, MANDATE, MAX_WORKERS, MODEL, NEWSLETTER_CONFIG, PROJECT, REVIEW_SCHEDULE, REVIEW_WORKERS, TAXONOMY, VERIFY_MODEL
 from .newsletters import classify_source, extract_message_bodies, html_to_text_and_links
 from .logic import clean_url, consolidate_prepared, financing_caveats, make_package, merge_deals, needs_verification, normalize_fields, normalized_name, portfolio_match, preserve_financing_caveats, publication_records, validate_selected, week_for_day
@@ -51,6 +51,7 @@ def import_history():
 
 
 def fetch_gmail(wid, start, end):
+    check_connection(GMAIL_TOKEN, "gmail")
     config = json.loads(NEWSLETTER_CONFIG.read_text())
     token = GMAIL_TOKEN
     if not token.exists():
@@ -58,10 +59,7 @@ def fetch_gmail(wid, start, end):
     with token.open("rb") as handle:
         creds = pickle.load(handle)
     if creds.expired:
-        try:
-            creds.refresh(Request())
-        except RefreshError as error:
-            raise RuntimeError("Gmail token expired or was revoked. Run control_center/.venv/bin/python -m control_center.auth --gmail, then retry Prepare Data.") from error
+        refresh_credentials(creds, Request(), token, "gmail")
         with token.open("wb") as handle:
             pickle.dump(creds, handle)
         token.chmod(0o600)
@@ -71,7 +69,7 @@ def fetch_gmail(wid, start, end):
     a = int(datetime.combine(date.fromisoformat(start), datetime.min.time(), zone).timestamp())
     b = int(datetime.combine(date.fromisoformat(end) + timedelta(days=1), datetime.min.time(), zone).timestamp())
     url = "https://gmail.googleapis.com/gmail/v1/users/me"
-    session = AuthorizedSession(creds)
+    session = GuardedSession(creds, token_path=token, connection="gmail")
     labels = session.get(url + "/labels", timeout=30)
     labels.raise_for_status()
     label = next((l["id"] for l in labels.json().get("labels", []) if l["name"] == config["gmail"]["label_name"]), None)
@@ -92,7 +90,7 @@ def fetch_gmail(wid, start, end):
     session.close()
 
     def read_message(mid):
-        with AuthorizedSession(creds) as client:
+        with GuardedSession(creds, token_path=token, connection="gmail") as client:
             response = client.get(url + "/messages/" + mid, params={"format": "full"}, timeout=45)
             response.raise_for_status()
             return response.json()

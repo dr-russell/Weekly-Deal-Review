@@ -225,6 +225,14 @@ control_center/.venv/bin/python -m control_center.auth --gmail
 
 Write authorization has Sheets and Docs scopes. Gmail has a separate read-only
 token. Complete warnings, credential entry, and permission screens yourself.
+An authentication rejection persistently blocks the affected connection, including
+connection checks and queued requests, without reopening sign-in. The block
+survives server restarts and ordinary token-file replacement. Reconnect explicitly
+with `--gmail` for Gmail or `--reauthorize` for Sheets/Docs; only successful account
+verification and credential storage clear that connection's block. HTTP 401 does
+not trigger automatic refresh retries. Temporary service errors and quota/file
+permission errors do not themselves require reconnection. Block markers live beside
+the local token files and contain no tokens or provider error payloads.
 Credentials and workflow data are excluded from Git. Do not share `data/`,
 newsletter bodies, portfolio files, or credential folders in a public demo repo.
 
