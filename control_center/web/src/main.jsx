@@ -237,7 +237,7 @@ function App(){
       {view==='history'&&<div className="table-scroll"><table><thead><tr><th>Started</th><th>Week</th><th>Workflow</th><th>Target</th><th>Status</th><th>Selected</th><th>Time</th><th/></tr></thead><tbody>{historyRuns.map(r=><tr key={r.id} onClick={()=>openRun(r.id)}><td>{new Date(r.started_at).toLocaleString()}</td><td>{r.week_id.split('_').join(' to ')}</td><td>{r.kind}</td><td>{r.target}</td><td><Badge value={r.status}/></td><td>{r.historical_selected_count??r.metrics.count??r.metrics.unique_deals??'--'}</td><td>{sec(r.elapsed)}</td><td><ChevronRight size={16}/></td></tr>)}</tbody></table>{!historyRuns.length&&<div className="empty">No runs for the selected weeks</div>}</div>}
       </div>
     </main>
-    {detail&&<DealDetail key={detail.id} deal={detail} close={()=>{setDetail(null);setRepairField(null)}} save={saveRecordEdits} recheck={recheckDeal} options={overview?.field_options||{}} repairField={repairField} clearRepair={()=>setRepairField(null)} busy={view==='run-detail'?false:busy||active} pending={detail.pending_recheck??run?.metrics?.pending_rechecks?.includes(detail.id)}/>}
+    {detail&&<DealDetail key={detail.id} deal={detail} close={()=>{setDetail(null);setRepairField(null)}} save={saveRecordEdits} recheck={recheckDeal} options={overview?.field_options||{}} repairField={repairField} clearRepair={()=>setRepairField(null)} busy={view==='run-detail'?false:busy} readOnly={view==='run-detail'||active} pending={detail.pending_recheck??run?.metrics?.pending_rechecks?.includes(detail.id)}/>}
     {confirmAction&&<EditorFrame title={confirmAction.label} close={()=>setConfirmAction(null)} saving={busy}><p className="confirmation-copy">{confirmAction.confirmation}</p><footer className="confirmation-actions"><button className="secondary" disabled={busy} onClick={()=>setConfirmAction(null)}>Cancel</button><button className="primary" disabled={busy} onClick={async()=>{await workspaceAction(confirmAction,true);setConfirmAction(null)}}><RefreshCw size={15}/>{busy?'Applying':confirmAction.label}</button></footer></EditorFrame>}
   </div>
 }
@@ -335,13 +335,13 @@ function evidenceName(e){if(e.source)return e.source+(e.date?' · '+e.date:'');i
 function EvidenceGroup({group,cited}){
   return <details id={'evidence-'+group.id} className={group.source?'':'web-evidence'}><summary>{group.source?<Mail size={15}/>:<FileText size={15}/>}<span>{evidenceName(group)}</span>{cited&&<small className="cited-label">Cited for decision</small>}</summary>{group.url&&<a href={group.url} target="_blank" rel="noreferrer">{group.url}<ExternalLink size={13}/></a>}{group.items.map((item,i)=><div key={i}>{item.text&&<p className="source-text">{item.text}</p>}{item.quote&&<blockquote>{item.quote}</blockquote>}{item.summary&&<p>{item.summary}</p>}{item.fields&&<small>{item.fields.map(fieldName).join(', ')}{item.at&&' / '+new Date(item.at).toLocaleString()}</small>}</div>)}</details>;
 }
-function DealDetail({deal,close,save,recheck,options,repairField,clearRepair,busy,pending}){
+function DealDetail({deal,close,save,recheck,options,repairField,clearRepair,busy,readOnly,pending}){
   const [editing,setEditing]=useState(false),[draft,setDraft]=useState({...deal.editable_fields});
   const [draftFit,setDraftFit]=useState(''),[reason,setReason]=useState(''),[decisionUrl,setDecisionUrl]=useState(''),[decisionEvidence,setDecisionEvidence]=useState('');
   const [note,setNote]=useState(''),[fieldUrl,setFieldUrl]=useState(''),[saving,setSaving]=useState(false),[error,setError]=useState('');
   const [evidenceOpen,setEvidenceOpen]=useState(false),[selectedEvidence,setSelectedEvidence]=useState(null);
   const form=useRef(null);
-  const decision=deal.review_decision||deal.decisions[0],editable=deal.editable&&!busy;
+  const decision=deal.review_decision||deal.decisions[0],editable=deal.editable&&!busy&&!readOnly;
   const canEditDecision=deal.editable_decision??Boolean(deal.editable_run_id&&!decision?.final.known_investment);
   const sources=evidenceGroups([...deal.source_evidence,...deal.evidence.filter(e=>['web','human'].includes(e.kind))]);
   const cited=new Set([...(decision?.final.evidence_ids||[]),decision?.final.manual_override?.evidence_id].filter(Boolean));
@@ -351,34 +351,34 @@ function DealDetail({deal,close,save,recheck,options,repairField,clearRepair,bus
   function begin(){setDraft({...deal.editable_fields});setDraftFit(decision?.final.fit||'');setReason('');setDecisionUrl('');setDecisionEvidence('');setNote('');setFieldUrl('');setError('');setEditing(true)}
   function cancel(){setEditing(false);setError('');clearRepair()}
   function revealEvidence(id){setEvidenceOpen(true);setSelectedEvidence(id)}
-  useEffect(()=>{if(repairField&&deal.editable)begin()},[repairField]);
+  useEffect(()=>{if(repairField&&editable)begin()},[repairField]);
   useEffect(()=>{if(editing&&repairField){const input=document.getElementById('company-field-'+repairField);input?.focus();input?.scrollIntoView({block:'nearest'})}},[editing,repairField]);
   useEffect(()=>{if(evidenceOpen&&selectedEvidence){const target=document.getElementById('evidence-'+selectedEvidence);if(target){target.open=true;target.scrollIntoView({block:'nearest'})}setSelectedEvidence(null)}},[evidenceOpen,selectedEvidence]);
   async function submit(event){
-    event.preventDefault();if(!changed||!form.current.reportValidity())return;
+    event.preventDefault();if(saving||busy||readOnly||!changed||!form.current.reportValidity())return;
     setSaving(true);setError('');
     try{await save(deal,changes,decisionChanged?{fit:draftFit,reason:reason.trim(),source_url:decisionUrl.trim(),evidence_id:decisionEvidence}:null,note.trim(),fieldUrl.trim(),'');setEditing(false);clearRepair()}
     catch(error){setError(error.message)}finally{setSaving(false)}
   }
   function fieldInput(key){
-    const props={id:'company-field-'+key,value:draft[key]||'',disabled:saving||busy,onChange:event=>setDraft(current=>({...current,[key]:event.target.value}))};
+    const props={id:'company-field-'+key,value:draft[key]||'',disabled:saving||busy||readOnly,onChange:event=>setDraft(current=>({...current,[key]:event.target.value}))};
     if(options[key])return <select {...props}><option value="">Not available</option>{draft[key]&&!options[key].includes(draft[key])&&<option value={draft[key]}>{draft[key]}</option>}{options[key].map(value=><option key={value}>{value}</option>)}</select>;
     if(['description','investors'].includes(key))return <textarea {...props} rows={key==='description'?3:2} maxLength={5000}/>;
     return <input {...props} type={key==='deal_date'?'date':key==='website'||key==='announcement_link'?'url':'text'} maxLength={5000}/>;
   }
   return <div className="drawer-overlay" onClick={()=>{if(!saving&&!busy)close()}}><aside className={'drawer '+(editing?'editing':'')} onClick={event=>event.stopPropagation()}>
     <header><div><small>{deal.historical?'HISTORICAL FINANCING RECORD':'FINANCING RECORD'}</small><h2>{deal.company}</h2></div><div className="drawer-header-actions">
-      {editing?<><button type="button" className="text-button" disabled={saving||busy} onClick={cancel}>Cancel</button><button className="primary" type="submit" form="company-inline-form" disabled={saving||busy||!changed}><Save size={15}/>{saving?'Saving':'Save'}</button></>:deal.editable&&<button type="button" className="text-button" disabled={!editable} onClick={begin}><Pencil size={15}/>Edit</button>}
+      {editing?<><button type="button" className="text-button" disabled={saving||busy} onClick={cancel}>Cancel</button><button className="primary" type="submit" form="company-inline-form" disabled={saving||busy||readOnly||!changed}><Save size={15}/>{saving?'Saving':'Save'}</button></>:deal.editable&&<button type="button" className="text-button" disabled={!editable} onClick={begin}><Pencil size={15}/>Edit</button>}
       <button type="button" className="icon-btn" title="Close company details" aria-label="Close company details" disabled={saving||busy} onClick={close}><X size={20}/></button>
     </div></header>
     <form id="company-inline-form" ref={form} className="drawer-body" onSubmit={submit}>
       {error&&<div className="notice error" role="alert">{error}</div>}
       <section><h3>Review Decision</h3>
         {editing&&canEditDecision?<div className="inline-decision-fields">
-          <label htmlFor="company-fit">Fit</label><select id="company-fit" value={draftFit} disabled={saving||busy} onChange={event=>setDraftFit(event.target.value)}><option value="" disabled>Unreviewed</option><option>Yes</option><option>No</option></select>
-          <label htmlFor="company-decision-reason">Reasoning <small>(optional)</small></label><textarea id="company-decision-reason" rows={2} value={reason} maxLength={3000} disabled={saving||busy} onChange={event=>setReason(event.target.value)} placeholder="Add your reasoning"/>
-          <label htmlFor="company-decision-evidence">Decision source <small>(optional)</small></label><select id="company-decision-evidence" value={decisionEvidence} disabled={saving||busy} onChange={event=>setDecisionEvidence(event.target.value)}><option value="">Choose existing evidence</option>{sources.map(e=><option key={e.id} value={e.id}>{evidenceName(e)}</option>)}</select>
-          <label htmlFor="company-decision-url">Decision source URL <small>(optional)</small></label><input id="company-decision-url" type="url" value={decisionUrl} maxLength={2000} disabled={saving||busy} onChange={event=>setDecisionUrl(event.target.value)} placeholder="https://"/>
+          <label htmlFor="company-fit">Fit</label><select id="company-fit" value={draftFit} disabled={saving||busy||readOnly} onChange={event=>setDraftFit(event.target.value)}><option value="" disabled>Unreviewed</option><option>Yes</option><option>No</option></select>
+          <label htmlFor="company-decision-reason">Reasoning <small>(optional)</small></label><textarea id="company-decision-reason" rows={2} value={reason} maxLength={3000} disabled={saving||busy||readOnly} onChange={event=>setReason(event.target.value)} placeholder="Add your reasoning"/>
+          <label htmlFor="company-decision-evidence">Decision source <small>(optional)</small></label><select id="company-decision-evidence" value={decisionEvidence} disabled={saving||busy||readOnly} onChange={event=>setDecisionEvidence(event.target.value)}><option value="">Choose existing evidence</option>{sources.map(e=><option key={e.id} value={e.id}>{evidenceName(e)}</option>)}</select>
+          <label htmlFor="company-decision-url">Decision source URL <small>(optional)</small></label><input id="company-decision-url" type="url" value={decisionUrl} maxLength={2000} disabled={saving||busy||readOnly} onChange={event=>setDecisionUrl(event.target.value)} placeholder="https://"/>
         </div>:decision?<>
           <div className="decision-summary"><Badge value={decision.final.fit}/><span>{decision.final.manual_override?'User-corrected decision':Number.isFinite(decision.final.confidence)?Math.round(decision.final.confidence*100)+'% model confidence':''}</span>{decision.verification&&<ShieldCheck size={17}/>}</div>
           <ReviewComparison decision={decision}/><div className="decision-reasoning"><small>Final Decision Reasoning</small><p>{decision.final.reason}</p></div>
@@ -390,7 +390,7 @@ function DealDetail({deal,close,save,recheck,options,repairField,clearRepair,bus
       <section><h3>Company & Financing</h3><dl>{Object.entries(deal.fields).map(([key,value])=><React.Fragment key={key}>
         <dt>{editing?<label htmlFor={'company-field-'+key}>{fieldName(key)}</label>:fieldName(key)}</dt><dd>{editing?fieldInput(key):value?<>{key==='website'||key==='announcement_link'?<a href={value} target="_blank" rel="noreferrer">{value}<ExternalLink size={12}/></a>:value}</>:<span className="missing">{deal.missing[key]||'Not available'}</span>}</dd>
       </React.Fragment>)}</dl>
-        {editing&&<div className="inline-field-note"><label htmlFor="company-field-note">Change note <small>(optional)</small></label><textarea id="company-field-note" rows={2} value={note} maxLength={3000} disabled={saving||busy} onChange={event=>setNote(event.target.value)}/><label htmlFor="company-field-source">Source URL <small>(optional)</small></label><input id="company-field-source" type="url" value={fieldUrl} maxLength={2000} disabled={saving||busy} onChange={event=>setFieldUrl(event.target.value)} placeholder="https://"/></div>}
+        {editing&&<div className="inline-field-note"><label htmlFor="company-field-note">Change note <small>(optional)</small></label><textarea id="company-field-note" rows={2} value={note} maxLength={3000} disabled={saving||busy||readOnly} onChange={event=>setNote(event.target.value)}/><label htmlFor="company-field-source">Source URL <small>(optional)</small></label><input id="company-field-source" type="url" value={fieldUrl} maxLength={2000} disabled={saving||busy||readOnly} onChange={event=>setFieldUrl(event.target.value)} placeholder="https://"/></div>}
       </section>
       <section className="company-evidence"><h3><button type="button" className="disclosure-button" aria-expanded={evidenceOpen} aria-controls="company-source-evidence" onClick={()=>setEvidenceOpen(!evidenceOpen)}><span>Source Evidence</span><ChevronRight size={16}/></button></h3><div id="company-source-evidence" hidden={!evidenceOpen}>{sources.map(e=><EvidenceGroup key={e.id} group={e} cited={e.ids.some(id=>cited.has(id))}/>)}</div></section>
       <section hidden={deal.historical}><h3>Correction History</h3>{!deal.field_history.length&&!deal.feedback.length&&<small>No user corrections</small>}
